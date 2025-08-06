@@ -1,0 +1,2426 @@
+---
+title: "Discordant circulating and mucosal antibody responses elicited by vaccination
+  and two SARS-CoV-2 epidemic waves in Brazil"
+output:
+  html_document: default
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+---
+
+```{r setup, include = FALSE, echo = F}
+
+# TODO: Figure 6b
+
+# Session info
+# R version 4.4.3 (2025-02-28 ucrt)
+# Platform: x86_64-w64-mingw32/x64
+# Running under: Windows 11 x64 (build 26100)
+
+# 0. Setup ----------
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = F)
+
+rm(list = ls())
+
+# Data sources
+# Data source for epi curve
+# https://bi.saude.ba.gov.br/transparencia/
+# https://prodeboffice365-my.sharepoint.com/personal/divep_covid_saude_ba_gov_br/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fdivep%5Fcovid%5Fsaude%5Fba%5Fgov%5Fbr%2FDocuments%2Fbase%20de%20dados%20do%20estado&ga=1
+
+# Vaccine data
+# https://bi.saude.ba.gov.br/vacinacao/
+# https://prodeboffice365-my.sharepoint.com/personal/divep_sipni_saude_ba_gov_br/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fdivep%5Fsipni%5Fsaude%5Fba%5Fgov%5Fbr%2FDocuments%2FBase%20Vacina%C3%A7%C3%A3o%20da%20Covid&ga=1
+# https://github.com/wcota/covid19br-vac
+
+# Data source for variants:
+# http://www.genomahcov.fiocruz.br/dashboard-en/
+
+# Load packages
+library(tidyverse)
+library(ggnewscale)
+library(table1)
+library(readxl)
+library(readr)
+library(patchwork)
+library(matrixStats)
+library(ggpubr)
+library(ggsci)
+library(grid)
+library(gridExtra)
+library(Gmisc)
+library(rstatix)
+library(eeptools)
+library(ggbeeswarm)
+library(cowplot)
+library(pheatmap)
+library(ggplotify)
+library(heatmaply)
+library(gtable)
+library(cowplot)
+library(reshape2)
+library(kableExtra)
+library(zoo)
+library(pROC)
+library(TOSTER)
+library(PropCIs)
+
+# Set seed
+set.seed(1407)
+
+# Set working directory
+setwd("C:/Users/mofofan/OneDrive - Emory/Yale data/Antibody Discordance Paper/")
+
+# 1. Load data-------------- 
+dat1 <- readRDS("MucosalImmunity_Deidentified.rds") 
+
+# ELISA data for PCR-tested individuals
+datpcr <- readRDS("MucosalImmunity_PCR_Validation.rds")
+
+# Quantitative ELISA data in unexposed individuals
+datunexp <- readRDS("MucosalImmunity_Unexposed.rds")
+
+# State COVID confirmed case data
+datepi <- read_delim("BancoEstadualCOVID19CONFIRMADOS_31-05-2022.csv",
+                     delim = ";")
+
+# State COVID death data
+datepi2 <- read_xlsx("Banco Estadual COVID-19OBITOS_12-06-2022.xlsx")
+
+# Genomic surveillance for Bahia
+vardat <- read_excel("BahiaGISAID.xlsx")
+
+# State vaccination data
+bavax <- read.csv("processed_BA.csv")
+
+# Subsets
+# Participants included in study
+dat1.comp <- subset(dat1, included == T)
+
+# Full set of participants with sequential results
+datall <- subset(dat1, !is.na(Serum.S.IgG.nod.fold))
+
+# 2. Figure settings----------
+# Color palettes
+npglight <- pal_npg(palette = "nrc", alpha = 0.6)(10)
+prismcol <- c("#1b6393", "#fcd351", "#F5BA00")
+expcols <- c("black", "#ff0066", "#107f80", "#40007f", "#aa66ff", "#66ccfe", 
+             "#0d0887ff")
+agcols <- c("#8AAFDC", "#9B6EB8", "#F5BAE6", "#9BCC87", "#73484B", "#E0898E",
+           "#fcd351", "#f8eec1", "#F5BA00", "#c7e3cc", "#7b914a")
+percol <- "blue"
+
+# Choose lower or upper case panel labels
+mylabels <- letters 
+taglev <- "a"
+tagface <- "bold" 
+labform <- list(color = "black", face = "bold", family = NULL, size = 12)
+labsize <- 12
+
+```
+
+<br>
+<br>
+
+This document reproduces the figures, tables, and key results of analyses
+describing systemic and mucosal SARS-CoV-2 antibody
+responses in a longitudinal cohort in Brazil. 
+  
+  
+In order to protect identifiable health information, dates and 
+ages >=70 are obfuscated. This may result in slight deviations from the 
+published figures and tables.
+
+<br>  
+  
+**Figure 1: Epidemiologic context**  
+
+```{r fig1, include = T, fig.height = 8}
+
+## Panel 1: Case and mortality data ===============
+datepi <- datepi %>%
+  subset(`MUNICIPIO DE RESIDENCIA` == "SALVADOR") %>%
+  group_by(`DATA DA NOTIFICACAO`) %>%
+  summarise(new = n())
+
+datepi$date <- as.Date(datepi$`DATA DA NOTIFICACAO`, "%d/%m/%Y")
+
+datepi <- subset(datepi, date > "2020-04-01" & date < "2022-04-01")
+
+datepi <- datepi[order(datepi$date), ]
+
+datepi2 <- datepi2 %>%
+  subset(MUNICIPIO == "SALVADOR") %>%
+  group_by(`DATA OBITO`) %>%
+  summarise(new = n())
+
+datepi2$date <- zoo::as.Date(datepi2$`DATA OBITO`, "%d/%m/%Y", tz = "EST")
+
+datepi2 <- subset(datepi2, date > "2020-04-01" & date <= "2022-04-01")
+
+datepi2 <- datepi2[order(datepi2$date), ]
+
+dateseq <- seq(as.Date("2020-04-01"), as.Date("2022-04-30") , "4 months")
+dateseq <- format(dateseq, "%m/%y")
+dateseq2 <- c(rbind(dateseq, matrix(nrow = 3, ncol = length(dateseq), "")))[1:25]
+
+coeff2 <- 1/10
+plot1 <- ggplot() +
+  geom_bar(data = datepi, aes(x = date, y = new, fill = "case", color = "case"), stat = "identity") +
+  geom_bar(data = datepi2, aes(x = date, y = new/coeff2, fill = "death", color = "death"), stat = "identity") +
+  scale_x_date(breaks = seq(as.Date("2020-04-01"), as.Date("2022-04-01") , "1 month"),
+               date_minor_breaks = "1 month",
+               labels = dateseq2, name = "",
+               expand = c(0, 30)) +
+  scale_fill_manual(labels = c("Confirmed cases", "Deaths"), name = "Daily incidence",
+                     values = c("case" = "gray80", "death" = "gray50")) +
+  scale_color_manual(labels = c("Confirmed cases", "Deaths"), name = "Daily incidence",
+                    values = c("case" = "gray80", "death" = "gray50")) +
+  guides(color = guide_legend(override.aes = list(linetype = 0))) +
+  scale_y_continuous(name = "Cases",  breaks = seq(0, 2000, 500), lim = c(0, 2000),
+                     # Add a second axis and specify its features
+                     sec.axis = sec_axis(trans=~.*coeff2, name="Deaths", breaks = seq(0, 200, 50)),
+                     expand = c(0, 0)) +       
+  theme_classic() +
+  theme(text = element_text(size = 10)) +
+  theme(plot.margin = unit(c(0, 0, 0, 1), "cm")) +
+  theme(legend.key.size = unit(8, "pt")) +
+  geom_vline(aes(xintercept = ymd("2020-11-17")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-02-26")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-07-14")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-10-31")), lty = "dashed", col = percol) +
+  annotate("text", x = ymd("2020-12-31"), y = 1925, label = "Survey 1", 
+           col = percol, size = 3) +
+  annotate("text", x = ymd("2021-08-31"), y = 1925, label = "Survey 2",
+           col = percol, size = 3) 
+
+
+## Panel 2: Circulating variants =======================
+# Select data for Bahia, set day of month to 15th
+vardat2 <- filter(vardat, vardat$State == "Bahia" & !(Period %in% c("May 2022", "Apr 2022")))
+vardat2$Date <- paste0("15 ", vardat2$Period)
+vardat2$Date <- as.Date(vardat2$Date, "%d %B %Y")
+vardat2 <- subset(vardat2, Date > "2020-03-15")
+
+vardat2$`Relevant lineages`<- factor(vardat2$`Relevant lineages`,
+                                    labels = c("Delta (B.1.617.2)",
+                                               "Others",
+                                               "Others",
+                                               "Others",
+                                               "Alpha (B.1.1.7)",
+                                               "Omicron (BA.1)",
+                                               "Omicron (BA.2)",
+                                               "Others",
+                                               "Gamma (P.1)",
+                                               "Zeta (P.2)"))
+
+vardat2$`Relevant lineages`<- factor(vardat2$`Relevant lineages`,levels = c("Gamma (P.1)",
+                                                                          "Zeta (P.2)",
+                                                                          "Alpha (B.1.1.7)",
+                                                                          "Delta (B.1.617.2)",
+                                                                          "Omicron (BA.1)",
+                                                                          "Omicron (BA.2)",
+                                                                          "Others") )
+
+# Repeat each entry by its frequency
+vardat3 <- as.data.frame(lapply(vardat2, rep, vardat2$Quantity))
+
+# Number of samples in each time interval, make x value 15th of the month
+var_range <- vardat2 %>% group_by(Date) %>% 
+  dplyr::summarise(sums = sum(Quantity)) %>% 
+  as.data.frame() 
+
+# Table of proportions
+tab <- with(vardat3, table(Date, Relevant.lineages))
+tab2 <- cbind(tab, Total = rowSums(tab))
+
+a <- prop.table(tab, margin = 1)
+b <- as.data.frame(a) 
+
+b$Date <- as.Date(b$Date)
+b$Variants <- b$Relevant.lineages
+b$Percentage <- b$Freq
+b2 <- subset(b, Date == "2022-03-15") %>%
+  mutate(Date = "2022-04-01")
+b3 <- subset(b, Date == "2020-04-15") %>%
+  mutate(Date = "2020-04-01")
+b <- rbind(b, b2, b3)
+
+plot2 <- ggplot() +
+  geom_area(data = subset(b), aes(x=Date, y=Percentage, fill=Variants)) +
+  scale_x_date(breaks = seq(as.Date("2020-04-01"), as.Date("2022-04-01") , "1 month"),
+               date_minor_breaks = "1 month",
+               labels = dateseq2, name = "",
+               expand = c(0, 30)) +
+  scale_y_continuous(          # y-axis scale
+    name = "Variant prevalence",
+    expand = c(0,0),
+    limits = c(0, NA), 
+    labels = scales::percent,
+  ) +       
+  theme_classic() +
+  scale_fill_manual(values = c(#"Others"= "gray",
+    "Alpha (B.1.1.7)" = agcols[6],
+    "Zeta (P.2)"= prismcol[1],
+    "Gamma (P.1)" = agcols[2],
+    "Delta (B.1.617.2)"= agcols[3],
+    "Omicron (BA.1)"= agcols[10],
+    "Omicron (BA.2)" = agcols[11],
+    "Others" = "lightgray"))+
+  geom_label(aes(x = Date, y = 0.1, label = sums), data = var_range, 
+             size = 2.5, label.padding = unit(0.125, "lines"), fill = "NA") +
+  theme(text = element_text(size = 10)) +
+  guides(fill = guide_legend(override.aes = list(shape = NA))) +
+  theme(plot.margin = unit(c(0, 0, 0, 1), "cm")) +
+  theme(legend.key.size = unit(8, "pt")) +
+  geom_vline(aes(xintercept = ymd("2020-11-17")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-02-26")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-07-14")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-10-31")), lty = "dashed", col = percol) 
+
+
+## Panel 3: Vaccinations ======================
+bavax <- bavax %>%
+  mutate(dose = factor(dose)) %>%
+  mutate(date = ymd(date))
+
+bavax2 <- bavax %>%
+  subset(city == "Salvador/BA") %>%
+  subset(dose %in% c("1", "2")) %>%
+  group_by(dose, date) %>%
+  summarise(n = sum(count), pop = mean(pop2021)) %>%
+  group_by(dose) %>%
+  mutate(cumn = cumsum(n)) %>%
+  mutate(cump = cumn / pop)
+
+plot3 <- ggplot(subset(bavax2, date <= "2022-04-01")) +
+  geom_area(aes(x = date, y = cump, fill = dose), position = "identity") +
+  scale_fill_manual(name = "Vaccine Dose",
+                    labels = c("Dose 1", "Dose 2"),
+                    values = c("1" = prismcol[2], "2" = prismcol[3])) +
+  scale_y_continuous(breaks = seq(0, 0.85, 0.2), name = "% Vaccination",
+                     limits = c(0, 0.85), expand = c(0, 0),
+                     labels = seq(0, 0.8, 0.2) * 100) +
+  scale_x_date(breaks = seq(as.Date("2020-04-01"), as.Date("2022-04-01") , "1 month"),
+               date_minor_breaks = "1 month",
+               limits = c(as.Date("2020-04-01"), as.Date("2022-04-01")),
+               labels = dateseq2, name = "",
+               expand = c(0, 30)) +
+  theme_classic() +
+  theme(text = element_text(size = 10)) +
+  theme(plot.margin = unit(c(0, 0, 0, 1), "cm")) +
+  theme(legend.key.size = unit(8, "pt"))  +
+  geom_vline(aes(xintercept = ymd("2020-11-17")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-02-26")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-07-14")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-10-31")), lty = "dashed", col = percol)
+
+## Panel 4: Recruitment and exposures =====================
+coeff3 <- 1/30
+seropos1 <- 100 * mean(datall$Serum.S.IgG.nod.S1 >= 0.8, na.rm = T)
+seropos2 <- 100 * mean(datall$Serum.S.IgG.nod.S2 >= 0.8, na.rm = T)
+
+# Base plot
+plot4base <- ggplot() +
+  scale_x_date(breaks = seq(as.Date("2020-04-01"), as.Date("2022-04-01") , "1 month"),
+               date_minor_breaks = "1 month",
+               limits = c(as.Date("2020-04-01"), as.Date("2022-04-01")),
+               labels = dateseq2, name = "Month/Year",
+               expand = c(0, 30)) +
+  theme_classic() +
+  
+  scale_fill_manual(name = "Samples", values = c("all" = "gray80", "samp" = "gray50"), 
+                    labels = c("Entire cohort", "Selected samples")) + 
+  scale_color_manual(name = "Samples", labels = c("Entire cohort", "Selected samples"),
+                     values = c("all" = "blue", "samp" = "red")) +
+  theme(text = element_text(size = 10)) +
+  theme(plot.margin = unit(c(0, 0, 0, 1), "cm")) +
+  guides(color = guide_legend(
+                              keyheight = unit(10, "pt"), keywidth = unit(8, "pt")),
+         fill = guide_legend(keyheight = unit(8, "pt"), keywidth = unit(8, "pt"))) +
+  scale_y_continuous("Anti-S IgG OD", limits = c(0, 12.7),breaks = seq(0, 12, 1),
+                     expand = c(0, 0)) +
+  geom_vline(aes(xintercept = ymd("2020-11-17")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-02-26")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-07-14")), lty = "dashed", col = percol) +
+  geom_vline(aes(xintercept = ymd("2021-10-31")), lty = "dashed", col = percol) +
+  geom_hline(aes(yintercept = 0.8), lty = "dashed") +
+  annotate(geom = "text", x = ymd("2021-01-07"), y = 12.3, size = 3,
+           label = paste0(sprintf("%.1f", seropos1), "%")) +
+  annotate(geom = "text", x = ymd("2021-09-07"), y = 12.3, size = 3,
+           label = paste0(sprintf("%.1f", seropos2), "%")) 
+
+plot4 <- plot4base + 
+  geom_violin(aes(x = zoo::as.Date(runif(nrow(datall), ymd("2020-11-27"), ymd("2021-02-16"))), y = Serum.S.IgG.nod.S1), 
+              col = "gray40", fill = "gray75",
+              data = datall, adjust = 2) +
+  geom_violin(aes(x = zoo::as.Date(runif(nrow(datall), ymd("2021-07-24"), ymd("2021-10-21"))), y = Serum.S.IgG.nod.S2), 
+              col = "gray40", fill = "gray75", 
+              data = datall, adjust = 2) +
+  geom_point(aes(x = dcol.S1, y = Serum.S.IgG.nod.S1, col = "all"), datall, alpha = 0.2, size = 0.5) +
+  geom_point(aes(x = dcol.S2, y = Serum.S.IgG.nod.S2, col = "all"), datall, alpha = 0.2, size = 0.5) +
+  geom_point(aes(x = dcol.S1, y = Serum.S.IgG.nod.S1, col = "samp"), dat1.comp, alpha = 1, size = 0.5) +
+  geom_point(aes(x = dcol.S2, y = Serum.S.IgG.nod.S2, col = "samp"), dat1.comp, alpha = 1, size = 0.5) +
+  scale_color_manual(name = "Samples", labels = c("Entire cohort", "Selected samples"),
+                     values = c("all" = "gray10", "samp" = "blue"))
+
+
+## Arrange panels =================
+layout1 <- "
+A
+B
+C
+D"
+
+plot1 + plot2 + plot3 + plot4 + plot_layout(design=layout1) +
+  plot_annotation(tag_levels = taglev) &
+  theme(plot.tag = element_text(size = labsize, face = tagface)) &
+  theme(plot.margin = margin( t = 0, r = 0, b = 0, l = 0 )) &
+  theme(legend.text = element_text(size = 7),
+        legend.spacing.x = unit(1, "pt"), legend.title = element_text(size = 8),
+        legend.margin = margin(t = 0, r = 0,  b = 0, l = 0, unit = "cm"),
+        legend.justification = c(0, 1),
+        legend.box.margin = margin(t = 3, r = 3,  b = 3, l = 3, unit = "pt"),
+        legend.position = c(0.037, 1.01))
+
+rm(list = c("datepi", "datepi2", "vardat", "vardat2", "vardat3", 
+            "bavax", "bavax2", "b", "b2", "b3"))
+
+
+```
+
+**a**, Daily incidence or reported COVID-19 cases (light gray; left axis) and deaths
+(dark gray; right axis) in Salvador. 
+**b**, Temporal distribution of SARS-CoV-2 variants circulating in Salvador. 
+The light gray area combines multiple variants that are not further identified 
+in state-reported data. The number of isolates that were sequenced in each 
+period is indicated above the x-axis. Data were obtained from a publicly 
+available database that is maintained by Fiocruz in collaboration with GISAID, 
+and includes isolates collected and sequenced by a network of state laboratories
+throughout Brazil (Rede Genomica Fiocruz). 
+**c**, Uptake of first (light yellow) and second (dark yellow) doses of SARS-CoV-2 
+vaccines in Salvador. 
+**d**, Timing of sample collection periods and distribution 
+of anti-S IgG levels. The violin plots show the overall distribution of anti-S 
+IgG ELISA optical density values among participants in Survey 1 and Survey 2.
+Circles represent individual values of anti-S IgG ELISA optical density values 
+for the entire cohort (gray) and samples selected for further immunological 
+analysis (blue). 
+
+<br>  
+<br>    
+    
+**Figure 2: Flowchart of study participation and sample selection**
+
+```{r fig2aprep, include = T, fig.height = 8, fig.width = 17, message = F, warning = F}
+
+# Number with S1 OD results
+n1 <- nrow(subset(dat1, !is.na(Serum.S.IgG.nod.S1)))
+
+# Number with S1 and S2 sequential results
+datsub <- subset(datall, !is.na(Serum.S.IgG.nod.S1) & !is.na(Serum.S.IgG.nod.S2)) 
+nrow(datsub) -> ntot
+
+# Missing or incomplete vaccine data
+nrow(subset(datsub, is.na(vaxyn))) -> vaxmiss1
+nrow(subset(datsub, vaxyn == "Yes" & dvaxyn == F & !is.na(vaxtype1))) -> vaxmiss2
+nrow(subset(datsub, vaxyn == "Yes" & dvaxyn == T & is.na(vaxtype1))) -> vaxmiss3
+nrow(subset(datsub, vaxyn == "Yes" & dvaxyn == F & is.na(vaxtype1))) -> vaxmiss4
+vaxmisstot <- sum(vaxmiss1, vaxmiss2, vaxmiss3, vaxmiss4)
+
+# Have S1 and S2 sequential results and full vaccine data
+nrow(subset(datsub, vaxyn == "Yes" & dvaxyn == T & !is.na(vaxtype1))) -> vaxavl1
+nrow(subset(datsub, vaxyn == "No")) -> vaxavl2
+
+# Included in study sample
+datsub2 <- subset(datsub, included == T)
+
+
+# Exposures among all with exposure data
+ninf1 <- sum(datsub$exposure1 == "Seroconversion at Survey 1", na.rm = T)
+ninf2 <- sum(datsub$exposure1 == "Seroconversion at Survey 2", na.rm = T)
+nvax <- nrow(subset(datsub, exposure1 == "Vaccinated"))
+ninfvax <- nrow(subset(datsub, exposure1 == "Seroconversion & vaccination"))
+nreinf <- sum(datsub$exposure1 == "Inferred reinfection", na.rm = T)
+nunexp <- sum(datsub$exposure1 == "Seronegative", na.rm = T)
+nexp <- ninf1 + ninf2 + nreinf + ninfvax + nvax + nunexp
+
+
+# Final exposures among selected samples
+sinf1 <- sum(datsub2$exposure2 == "Seroconversion at Survey 1", na.rm = T)
+sinf2 <- sum(datsub2$exposure2 == "Seroconversion at Survey 2", na.rm = T)
+svax <- nrow(subset(datsub2, exposure2 == "Vaccinated"))
+sinfvax <- nrow(subset(datsub2, exposure2 == "Seroconversion & vaccination"))
+sreinf <- sum(datsub2$exposure2 == "Inferred reinfection", na.rm = T)
+sunexp <- sum(datsub2$exposure2 == "Seronegative", na.rm = T)
+sexp <- sinf1 + sinf2 + sreinf + sinfvax + svax + sunexp
+
+datsub3 <- subset(datsub, exposure1 %in% c("Seronegative", "Vaccinated",
+                                           "Seroconversion at Survey 1",
+                                           "Seroconversion at Survey 2",
+                                           "Seroconversion & vaccination",
+                                           "Inferred reinfection" ))
+
+```
+  
+We prospectively performed sociodemographic surveys and biospecimen collection 
+among a total of `r nexp` individuals over the course of two study periods 
+(Survey 1, November 2020 to February 2021; Survey 2, July to October 2021). 
+The cohort included both adults and children, with a median age of 
+`r median(datsub3$age.deid)` years (interquartile range 
+`r unname(quantile(datsub3$age.deid, 0.25))`-
+`r unname(quantile(datsub3$age.deid, 0.75))`) and 
+`r mean(datsub3$gender == "Female") * 100`% female participants. 
+Cohort demographics are summarized in Extended Data Table S1.  
+  
+
+```{r fig2a, include = T, fig.height = 8, fig.width = 17, message = F, warning = F}
+
+# Graphic parameters
+leftx <- .27
+rightx <- .85
+midx <- 0.5
+width <- .25
+width2 <- 0.13
+gp <- gpar(fill = "white")
+tp <- gpar(cex = 1, family = "Arial")
+tp2 <- gpar(cex = 2, family = "Arial", fontface = tagface)
+y1 <- 0.5
+y2 <- 0.35
+y3 <- 0.2
+y4 <- 0.05
+xvec <- 0.125 + 0.15*seq(0, 5)
+
+grid.newpage()
+
+annot1 <- grid.text(label = mylabels[1], x = 0, y = 0.97, just = -1, hjust = -1,
+                     gp = tp2)
+
+(box1a <- boxGrob(paste0("Participants with sera at Survey 1: ", n1),
+                  x=midx, y=0.95, box_gp = gp, width = width, just = "left",
+                  box_fn = rectGrob, txt_gp = tp))
+
+
+(box1b <- boxGrob(paste0("Participants with sera at Survey 2: ", ntot),
+                  x=midx, y=0.85, box_gp = gp, width = width, just = "left",
+                  box_fn = rectGrob, txt_gp = tp))
+
+connectGrob(box1a, box1b, "v", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+
+(box1.5 <- boxGrob(paste0("Missing vaccination data: ", vaxmisstot,
+                          "\n - Vaccination status: ", vaxmiss1,
+                          "\n - Date: ", vaxmiss2,
+                          "\n - Formulation: ", vaxmiss3,
+                          "\n - Date and formulation: ", vaxmiss4),
+                   x=rightx, y=.8, box_gp = gp, width = width-0.1, just = "left",
+                   box_fn = rectGrob, txt_gp = tp))
+# connect boxes like this
+connectGrob(box1b, box1.5, "-", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+
+(box2 <- boxGrob(paste0("Participants w/ exposure data: ", vaxavl1 + vaxavl2),
+                 x=midx, y=.7, box_gp = gp, width = width, just = "left",
+                 box_fn = rectGrob,txt_gp = tp))
+
+connectGrob(box1b, box2, "v", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+
+text3 <- grid.text(paste0("Entire cohort", "\n (", nexp, ")"), just = "left",
+                  x = 0, y = y1, gp=tp)
+
+(box3a <- boxGrob(paste0("Unvaccinated & \nseronegative: ", nunexp, " (",
+                         sprintf("%.1f", 100*nunexp/nexp), "%)"),
+                  x=xvec[1], y=y1, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box3b <- boxGrob(paste0("Vaccinated: \n", nvax, " (",
+                         sprintf("%.1f", 100*nvax/nexp), "%)"),
+                  x=xvec[2], y=y1, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box3c <- boxGrob(paste0("Seroconversion at \nSurvey 1: ", ninf1, " (",
+                         sprintf("%.1f", 100*ninf1/nexp), "%)"),
+                  x=xvec[3], y=y1, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box3d <- boxGrob(paste0("Seroconversion at \nSurvey 2: ", ninf2, " (",
+                         sprintf("%.1f", 100*ninf2/nexp), "%)"),
+                  x=xvec[4], y=y1, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box3e <- boxGrob(paste0("Seroconversion &\nvaccination: ", ninfvax,
+                         " (", sprintf("%.1f", 100*ninfvax/nexp), "%)"),
+                  x=xvec[5], y=y1, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box3f <- boxGrob(paste0("Inferred reinfection: \n", nreinf,
+                         " (", sprintf("%.1f", 100*nreinf/nexp), "%)"),
+                  x=xvec[6], y=y1, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+connectGrob(box2, box3a, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box2, box3b, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box2, box3c, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box2, box3d, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box2, box3e, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box2, box3f, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+
+text4 <- grid.text(paste0("Selected\nsamples", "\n (", sexp, ")"), just = "left", 
+                   x = 0, y = y2, gp=tp)
+
+(box4a <- boxGrob(paste0("Unvaccinated & \nseronegative: ", sunexp,
+                         " (", sprintf("%.1f", 100*sunexp/sexp), "%)"),
+                  x=xvec[1], y=y2, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box4b <- boxGrob(paste0("Vaccinated: \n", svax, " (",
+                         sprintf("%.1f", 100*svax/sexp), "%)"),
+                  x=xvec[2], y=y2, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box4c <- boxGrob(paste0("Seroconversion \nat Survey 1: ", sinf1,
+                         " (", sprintf("%.1f", 100*sinf1/sexp), "%)"),
+                  x=xvec[3], y=y2, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box4d <- boxGrob(paste0("Seroconversion \nat Survey 2: ", sinf2,
+                         " (", sprintf("%.1f", 100*sinf2/sexp), "%)"),
+                  x=xvec[4], y=y2, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box4e <- boxGrob(paste0("Seroconversion &\nvaccination: ", sinfvax,
+                         " (", sprintf("%.1f", 100*sinfvax/sexp), "%)"),
+                  x=xvec[5], y=y2, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+(box4f <- boxGrob(paste0("Inferred \nreinfection: ", sreinf,
+                         " (", sprintf("%.1f", 100*sreinf/sexp), "%)"),
+                  x=xvec[6], y=y2, box_gp = gp, width = width2, just = "left",
+                  box_fn = rectGrob,txt_gp = tp))
+
+connectGrob(box3a, box4a, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box3b, box4b, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box3c, box4c, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box3d, box4d, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box3e, box4e, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+connectGrob(box3f, box4f, "N", arrow_obj = arrow(length=unit(0.2, "cm"), type = "closed"))
+
+
+```
+
+```{r fig2bc, include = T, fig.height = 3.5, fig.width = 10, message = F, warning = F}
+
+# Distribution of OD values====================
+odlist1 <- list()
+odlist2 <- list()
+i <- 1
+groupvec <- c("Seronegative", "Vaccinated", "Seroconversion at Survey 1",
+              "Seroconversion at Survey 2", "Seroconversion & vaccination",
+              "Inferred reinfection")
+
+for(i in 1:length(groupvec)){
+  p1 <- ggplot(subset(datsub2, exposure2 == groupvec[i])) +
+  geom_jitter(aes(x = Adj.Serum.S.IgG.nod.S1, y = Adj.Serum.S.IgG.nod.S2), col = "darkgray") +
+  geom_hline(aes(yintercept = 0.8), lty = "dashed") +
+  geom_vline(aes(xintercept = 0.8), lty = "dashed") +
+  scale_x_continuous("Survey 1", lim = c(0, 12), exp = c(0, 0)) +
+  scale_y_continuous("Survey 2", lim = c(0, 12), exp = c(0, 0)) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 8))
+
+  p2 <- ggplot(subset(datsub2, exposure2 == groupvec[i])) +
+  geom_histogram(aes(x = Adj.Serum.S.IgG.nod.fold), col = "darkgray", fill = "lightgray") +
+  geom_vline(aes(xintercept = 1.5), lty = "dashed") +
+  scale_x_continuous("Fold change", trans = "log2",
+                     lim = c(0.125, 96), breaks = c(0.125, 1, 8, 48),
+                     labels = c("0.125", "1", "8", "48"),
+                     exp = c(0, 0)) +
+  scale_y_continuous("", exp = c(0, 0), lim = c(0, 11), breaks = seq(0, 10, 2)) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 8))
+
+  odlist1[[i]] <- p1
+  odlist2[[i]] <- p2
+}
+
+ggarrange(odlist1[[1]], odlist1[[2]], odlist1[[3]], odlist1[[4]], odlist1[[5]], odlist1[[6]],
+          odlist2[[1]], odlist2[[2]], odlist2[[3]], odlist2[[4]], odlist2[[5]], odlist2[[6]],
+          nrow = 2, ncol = 6, align = "hv",
+          font.label = labform,
+          labels = c(mylabels[2], rep(NA, 5), mylabels[3])) &
+  theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"))
+
+
+```  
+  
+  
+**a**, Vaccination status was determined by self-report and verification of vaccine 
+cards when available. Individuals who had received at least one vaccine dose 7
+or more days prior to serum collection were considered vaccinated. We screened
+for exposure to prior SARS-CoV-2 infection using a semi-quantitative anti-S IgG 
+ELISA optical density. Of the 1,526 individuals with available sera and data to
+determine exposure histories (“entire cohort”), we randomly selected 137 
+individuals (“selected samples”) for this study. We over-sampled individuals 
+who had no serologic evidence of infection to adequately compare their mucosal
+antibody responses to those of individuals with serologic evidence of at least 
+one infection. For each exposure group, the distribution of anti-S IgG optical
+density at Survey 1 and Survey 2 (**b**), and the distribution of fold increase 
+between Survey 1 and Survey 2 (**c**), are shown. 
+
+<br>  
+<br>
+
+**Figure 3: Neutralizing antibody responses differ by prior exposure to SARS-CoV-2 infection and vaccination**
+
+```{r fig3, include = T, fig.height = 5, fig.width = 12}
+
+# Compute geometric mean titer by exposure group
+datprnt <- subset(dat1, PRNT.results == T) %>%
+  dplyr::select(c("randid", "exposure2", grep("PRNT", colnames(dat1), value = T))) %>%
+  select(-PRNT.results) %>%
+  subset(exposure2 != "Seronegative")
+
+datprntlong <- datprnt %>%
+  pivot_longer(contains("PRNT"), names_to = c("strain", "survey"), 
+             names_pattern = "PRNT50.([[:alnum:]]+).([[:alnum:]]+)",
+             values_to = "prnt") 
+
+datgmt <- datprntlong %>%
+  filter(!is.na(prnt) & !is.na(exposure2) & survey == "S2") %>%
+  group_by(strain, survey, exposure2) %>%
+  summarise(gmt = mean(prnt, na.rm = T),
+            gmtsd = sd(prnt, na.rm = T),
+            n = n()) %>%
+  mutate(gmtse = gmtsd / sqrt(n)) %>%
+  mutate(gmtlo = gmt - gmtse) %>%
+  mutate(gmthi = gmt + gmtse) %>%
+  mutate(strain = factor(strain, levels = c("Ancestral", "Gamma", "Delta", "Omicron")))
+
+# For each exposure group, plot titer to ancestral, gamma, delta, Omicron
+# Overlay line of gmt
+datprntlong <- datprntlong %>%
+  mutate(strain = factor(strain, levels = c("Ancestral", "Gamma", "Delta", "Omicron"))) %>%
+  mutate(survey2 = as.numeric(as.factor(survey))) %>%
+  mutate(labels = case_when(strain == "Ancestral" ~ "A",
+                                 strain == "Gamma" ~ "gamma",
+                                 strain == "Delta" ~ "delta",
+                                 strain == "Omicron" ~ "omicron")) %>%
+  mutate(labels = factor(labels, levels = c("A", "gamma", "delta", "omicron"))) 
+
+labvec <- c("Ancestral (A)", 
+            expression(paste("Gamma (", gamma, ")")), 
+            expression(paste("Delta (", delta, ")")),
+            expression(paste("Omicron (", omicron, ")")))
+
+axisvec <- c("A", 
+             expression(gamma), 
+             expression(delta),
+             expression(omicron))
+
+prnt_list <- prnt_list2 <- list()
+
+lnwd <- 0.8
+
+for (i in 2:6){
+  p <- ggplot() +
+    theme_classic() +
+    ggtitle(" ") +
+    geom_point(aes(x = strain, y = prnt), color = "darkgray", shape = 18,
+               data = subset(datprntlong, exposure2 %in% levels(datprntlong$exposure2)[i] & 
+                               survey == "S2")) +
+    geom_line(aes(x = strain, y = gmt, group = survey, color = exposure2), 
+              size = lnwd,
+              data = subset(datgmt, exposure2 %in% levels(datprntlong$exposure2)[i] )) +
+    geom_point(aes(x = strain, y = gmt, color = exposure2), shape = 18, cex = 1.5, 
+               stroke = 1.2,
+               data = subset(datgmt, exposure2 %in% levels(datprntlong$exposure2)[i] )) +
+    geom_errorbar(aes(x = strain, ymin = gmtlo, ymax = gmthi), color = expcols[i], 
+                  width = 0.2, lwd = lnwd,
+                  data = subset(datgmt, exposure2 %in% levels(datprntlong$exposure2)[i] )) +
+    geom_blank(aes(x = strain, y = gmt, group = survey, color = exposure2), size = 1,
+               data = subset(datgmt, exposure2 != "Seronegative")) +
+    scale_y_continuous(expression(paste("Log ", PRNT[50])),
+                       limits = c(1, 4), breaks = seq(1, 4, 1)) +
+    scale_color_manual("Exposure", breaks = levels(datprntlong$exposure2)[2:6],
+                       labels = levels(datprntlong$exposure2)[2:6],
+                       values = expcols[3:7]) +
+    scale_x_discrete("", labels = axisvec) +
+    theme(axis.text.x = element_text(angle = 0)) + 
+    theme(plot.title = element_text(size = 8)) 
+  
+  p2 <- p
+
+  prnt_list[[i-1]] <- p  
+} 
+
+# Panel combining all exposure groups to create combined legend
+prnt_list[[6]] <- ggplot(subset(datgmt, !(exposure2 %in% c("Unexposed", "Seronegative")))) +
+  theme_classic() +
+  ggtitle("Neutralization activity by exposure") +
+  scale_y_continuous(expression(paste("Log ", PRNT[50])),
+                     lim = c(1, 2.5)) +
+  geom_point(aes(x = as.numeric(strain) + 0.08 * (as.numeric(exposure2) - 3),
+                 y = gmt, color = exposure2),
+             shape = 18, cex = 1.5, stroke = 1.2) +
+  geom_line(aes(x = as.numeric(strain) + 0.08 * (as.numeric(exposure2) - 3),
+                y = gmt, group = exposure2, color = exposure2), 
+                size = lnwd) +
+  scale_color_manual(values = expcols[3:7], breaks = levels(datgmt$exposure2)[2:6],
+                     name = "Exposure") 
+
+# PRNT fold-change
+datprntfold <- datprnt %>%
+  subset(!is.na(exposure2)) %>%
+  mutate(foldA = 10^(PRNT50.Ancestral.S2 - PRNT50.Ancestral.S1)) %>%
+  mutate(foldG = 10^(PRNT50.Gamma.S2 - PRNT50.Gamma.S1)) %>%
+  mutate(foldD = 10^(PRNT50.Delta.S2 - PRNT50.Delta.S1)) %>%
+  mutate(foldO = 10^(PRNT50.Omicron.S2 - PRNT50.Omicron.S1)) %>%
+  group_by(exposure2) %>%
+  summarise(Ancestral = mean(foldA, na.rm = T),
+            Gamma = mean(foldG, na.rm = T),
+            Delta = mean(foldD, na.rm = T),
+            Omicron = mean(foldO, na.rm = T)) %>%
+  pivot_longer(cols = Ancestral:Omicron, names_to = "strain", values_to = "fold") %>%
+  mutate(strain = factor(strain, levels = c("Ancestral", "Gamma", "Delta", "Omicron"))) %>%
+  mutate(labels = case_when(strain == "Ancestral" ~ "A",
+                            strain == "Gamma" ~ "gamma",
+                            strain == "Delta" ~ "delta",
+                            strain == "Omicron" ~ "omicron")) %>%
+  mutate(labels = factor(labels, levels = c("A", "gamma", "delta", "omicron")))
+
+stat.fold <- datprntlong %>%
+  subset(!is.na(exposure2) & exposure2 != "Seronegative") %>%
+  group_by(exposure2, labels) %>%
+  rstatix::t_test(prnt ~ survey) %>%
+  adjust_pvalue(method = "holm") %>%
+  add_significance("p.adj") %>%
+  add_xy_position()
+
+lastdig <- function(x) as.numeric(substr(x*1000, 4, 4))
+
+fold_list <- list()
+
+for(i in 2:6){
+  p <- ggplot(data = subset(datprntlong, 
+                            exposure2 == levels(datprntlong$exposure2)[i])) +
+    geom_point(aes(x = survey2 + lastdig(prnt)/100, y = prnt, 
+                   fill = strain, color = strain)) +
+    scale_x_continuous("Survey", breaks = c(1, 2), labels = c("1", "2")) +
+    scale_y_continuous(expression(paste("Log ", PRNT[50])),
+                       lim = c(1, 4), breaks = seq(1, 4)) +
+    facet_grid(cols = vars(labels), labeller = label_parsed) +
+    stat_pvalue_manual(data = subset(stat.fold,  
+                                     exposure2 == levels(datprntlong$exposure2)[i]),
+                       label = "p.adj.signif", hide.ns = T, y.position = 3.7,
+                       tip.length = 0, size = 2.5) +
+    geom_text(x = 1.5, y = 4, aes(label = paste0(c(sprintf("%.2f", fold)), "x")), 
+              size = 2.5,
+              data = subset(datprntfold,  exposure2 == levels(datprntlong$exposure2)[i])) +
+    scale_fill_manual("Lineage", breaks = c("Ancestral", "Gamma", "Delta", "Omicron"),
+                      labels = labvec,
+                      values = npglight[c(2, 6, 1, 3)]) +
+    scale_color_manual("Lineage", breaks = c("Ancestral", "Gamma", "Delta", "Omicron"),
+                       labels = labvec,
+                       values = npglight[c(2, 6, 1, 3)]) +
+    theme_classic() +
+    theme(strip.background = element_blank(), panel.spacing = unit(0, "lines"),
+          plot.title = element_text(size = 8),
+          axis.title.x = element_text(size = 9),
+          strip.text = element_text(hjust = 0.5)) +
+    ggtitle(levels(datprntlong$exposure2)[i]) +
+    geom_boxplot(aes(x = survey2, y = prnt, fill = strain, color = strain,
+                     group = survey2), alpha = 0.2, outlier.shape = NA) +
+    geom_line(aes(x = survey2 + lastdig(prnt)/100, y = prnt, col = strain, 
+                  group = randid), alpha = 0.2)
+  
+  fold_list[[i-1]] <- p
+}  
+
+# Set legends
+legtemp1 <- get_legend(fold_list[[2]] + 
+                         theme(legend.text = element_text(size = 7, hjust = 0),
+                               legend.title = element_text(size = 8),
+                               legend.spacing.y = unit(0, "line"),
+                               legend.key.size = unit(1, "line")
+                               )
+)
+
+legtemp2 <- get_legend(prnt_list[[6]] + 
+                         theme(legend.text = element_text(size = 7),
+                               legend.title = element_text(size = 8),
+                               legend.spacing.y = unit(0, "line"),
+                               legend.key.size = unit(1, "line")
+                         )
+)
+
+ggarrange(fold_list[[1]], fold_list[[2]], fold_list[[3]], fold_list[[4]], 
+          fold_list[[5]], as_ggplot(legtemp1),
+          prnt_list[[1]], prnt_list[[2]], prnt_list[[3]], prnt_list[[4]], 
+          prnt_list[[5]], as_ggplot(legtemp2),
+          ncol = 6, nrow = 2, align = "h", legend = "none", heights = c(2.5, 2.3),
+          labels = c(mylabels[seq(1, 5)], "", mylabels[seq(6, 10)], ""),
+          font.label = labform) 
+
+```
+  
+**a**-**e**, Plaque reduction neutralization titers (PRNT50) against the 
+Ancestral (A, blue), Gamma (γ, purple), Delta (Δ, pink), and Omicron (ο, green) 
+variants at Survey 1 and Survey 2 among individuals with varying exposure 
+histories: Seronegative and unvaccinated, Vaccinated, Seroconversion at 
+Survey 1, Seroconversion at Survey 2, Seroconversion and vaccination, and 
+Inferred reinfection. The fold-increase between Survey 1 and Survey 2 is 
+shown for each variant. 
+**f**-***j**, Geometric mean PRNT50 titers at Survey 2 against 
+the Ancestral, Gamma, Delta, and Omicron variants for each exposure group.
+Crossbars represent the standard errors. Each dot represents a single individual.
+Asterisks indicate statistically significant results 
+(* p < 0.05; ** < 0.01; *** < 0.001; **** < 0.0001).  
+
+<br>
+<br>
+      
+**Figure 4: Serum-inferred exposure history does not fully reflect SARS-CoV-2 specific antibody responses in the mucosal compartments**  
+
+```{r fig4, include = T, fig.height = 10, fig.width = 12}
+
+# Determine cutoffs for positive response: 99% confidence upper prediction limit of response in unexposed
+# Source: Frey et al (DOI: 10.1016/s0022-1759(98)00170-7)
+cutoff <- function(data, var, alpha){
+  if(!is.character(substitute(var))){var <- deparse(substitute(var))}
+  tmptab <- unlist(data[, var])
+  tmptab <- tmptab[!is.na(tmptab)]
+  tval = qt((alpha/100), df = length(tmptab) - 1)
+  fval = tval * sqrt(1 + 1/length(tmptab))
+  res = exp(mean(log(tmptab)) + sd(log(tmptab)) * fval)
+  return(list(n = length(tmptab), cutval = res))
+}
+
+# Compile cutoff table for all subsets
+# Sample type
+typevec <- c(rep("Serum", 6), rep("Saliva", 6), rep("Nasal", 6))
+# Assay
+varvec <- rep(grep("ngml", colnames(datunexp), value = T), 3)
+# Sample source
+popvec <- c(c("Pre-pandemic", "HCW", "Pre-pandemic", rep("HCW", 3)), 
+            rep("HCW", 6), rep("LTCF", 6))
+
+cuttab <- tibble(type = typevec,
+                 var = varvec,
+                 pop = popvec,
+                 alpha = rep(99, length(varvec)),
+                 n = NA,
+                 cut = NA)
+
+
+for(i in 1:nrow(cuttab)){
+  exptmp <- paste0("cutoff(subset(datunexp,source=='", cuttab$pop[i], 
+                   "'&type=='", cuttab$type[i],"'),", 
+                   cuttab$var[i], ",", cuttab$alpha[i], ")")
+  cuttmp <- unlist(eval(parse(text = exptmp)))
+  cuttab$n[i] <- cuttmp[1]
+  cuttab$cut[i] <- cuttmp[2]
+}
+
+# Assay results from unexposed individuals
+tmp1 <- datunexp %>%
+  pivot_longer(cols = matches("ngml"), names_to = "assay", values_to = "value") %>%
+  subset(source != "Pre-pandemic" & !is.na(value)) %>%
+  dplyr::select(-c("description")) %>%
+  # For those tested >= 1 time, compute mean
+  group_by(randid, assay, type, source) %>%
+  summarise(value = mean(value)) %>%
+  ungroup() %>%
+  pivot_wider(names_from = c("type", "assay"), id_cols = c("randid", "source"),
+              names_glue = "{type}.{assay}") %>%
+  mutate(exposure2 = "Unexposed") 
+
+tmp2 <- dat1.comp %>%
+  dplyr::select(c("randid", "exposure2", contains("ngml.S2"))) %>%
+  rename_with(~ str_remove(., ".S2"), everything()) %>%
+  mutate(source = "Salvador cohort") %>%
+  mutate(exposure2 = as.character(exposure2)) %>%
+  mutate(randid = as.character(randid))
+
+datelisa <- bind_rows(tmp1, tmp2) %>%
+   mutate(exposure2 = ordered(exposure2, levels = c("Unexposed", "Seronegative",
+                                        "Vaccinated", "Seroconversion at Survey 1",
+                                        "Seroconversion at Survey 2", 
+                                        "Seroconversion & vaccination",
+                                        "Inferred reinfection"))) %>%
+  pivot_longer(contains("ngml"), names_to = c("type", "Ig"),
+               values_to = "value",
+               names_pattern = "(Serum|Saliva|Nasal)\\.(.+)") %>%
+  mutate(cut1 = NA)
+
+# Add cutoffs
+for(i in 1:nrow(datelisa)){
+  datelisa$cut1[i] <- ifelse(is.na(datelisa$type[i]), NA,
+                           subset(cuttab, alpha == 99 & 
+                                    var == datelisa$Ig[i] & 
+                                    type == datelisa$type[i]) %>% 
+                             dplyr::select("cut") %>% unlist() %>% unname())
+}
+
+# Plot
+typvec <- rep(c("Serum", "Nasal", "Saliva"), each = 6)
+igvec <- rep(c("Stotal.IgG", "N.IgG", "Stotal.IgA","N.IgA", "RBD.IgG", "RBD.IgA"), 3)
+igvec2 <- rep(c("S IgG",  "N IgG", "S IgA","N IgA", "RBD IgG", "RBD IgA"), 3)
+# Axis limits
+limlo <- rep(c(1.5, -5.5, -5.5), each = 6)
+limhi <- rep(c(6, -1, -1), each = 6)
+# Amount to nudge significance bars vertically
+nudgevec <- rep(c(3, 2, 2), each = 6)
+
+elisa_list <- list()
+for(i in 1:18){
+  dtmp <- subset(datelisa, type == typvec[i] & grepl(igvec[i], Ig)) %>% 
+    subset(!is.na(value))
+  
+  tmpmult <- abs(limhi[i] - limlo[i]) %/% 3
+  
+  pstat <- subset(datelisa, type == typvec[i] & grepl(igvec[i], Ig)) %>%
+    mutate(value = log(value)) %>%
+    rstatix::tukey_hsd(value ~ exposure2) %>%
+    add_significance("p.adj") %>%
+    add_x_position(x = "exposure2") %>%
+    mutate(width = xmax - xmin) %>%
+    arrange(desc(width)) %>%
+    mutate(dec = cumsum(p.adj < 0.05)) %>%
+    mutate(dec = replace(dec, p.adj >= 0.05, 0)) %>%
+    mutate(y.position = limhi[i] - 0.2*dec*tmpmult)
+
+  p <- ggplot(dtmp) +
+    geom_beeswarm(aes(x = exposure2, y = log(value, 10), col = exposure2), corral = "random") +
+    geom_hline(aes(yintercept = log(cut1, 10)), lty = "dashed", col = "darkgray") +
+    stat_summary(aes(x = exposure2, y = log(value, 10), col = exposure2), fun = "median",
+                 geom = "crossbar", width = 0.8, lwd = 0.3, show.legend = F) +
+      stat_pvalue_manual(data = pstat, bracket.nudge.y = nudgevec[i],
+                         label = "p.adj.signif", hide.ns = T,
+                         tip.length = 0, size = 4) +
+      scale_y_continuous(paste0("Log ", typvec[i], " ", igvec2[i]), 
+                   breaks = seq(ceiling(limlo[i]), limhi[i],
+                                tmpmult)) +
+    scale_x_discrete("", labels = NULL) +
+    scale_color_manual("Exposure", breaks = levels(dtmp$exposure2),
+                       labels = levels(dtmp$exposure2),
+                       values = expcols) +
+    coord_cartesian(clip = "off", ylim = c(limlo[i], limhi[i])) + 
+    theme_classic() +
+    theme(axis.text = element_text(face = "bold", size = 8), 
+          axis.title = element_text(size = 10), axis.ticks.x = element_blank(),
+          plot.margin = unit(c(6, 0, 0, 0), "lines"))
+  
+  elisa_list[[i]] <- p  
+}
+
+ggarrange(elisa_list[[1]], elisa_list[[2]], elisa_list[[3]], elisa_list[[4]],
+          elisa_list[[7]], elisa_list[[8]], elisa_list[[9]], elisa_list[[10]],
+          elisa_list[[13]], elisa_list[[14]], elisa_list[[15]], elisa_list[[16]],
+          nrow = 3, ncol = 4, common.legend = T, legend = "right",
+          font.label = labform,
+          labels = mylabels[1:12]) 
+
+```
+  
+The levels of serum (**a**-**d**), nasal (**e**-**h**), and saliva (**i**-**l**)
+IgG and IgA antibody against the Spike (S Total) and Nucleocapsid (N) proteins 
+of SARS-CoV-2 were compared across the following exposure groups: Seronegative 
+and unvaccinated, Vaccinated, Seroconversion at Survey 1, Seroconversion at 
+Survey 2, Seroconversion and vaccination, and Inferred reinfection. Cutoffs for 
+positive responses are indicated by the dashed lines. Pre-infection serum and 
+saliva samples from healthcare workers and pre-pandemic nasal swabs from 
+residents and employees of a long-term care facility (labeled as Unexposed) 
+were used as the reference negative controls and for derivation of cutoffs 
+for positive salivary and nasal antibody responses. Cutoffs for positive 
+responses for serum antibodies were derived from pre-pandemic banked serum 
+samples from our cohort. Analysis was performed using one-way ANOVA with 
+correction for multiple comparisons using the Tukey method.
+
+<br>
+
+We used `r nrow(subset(datunexp, source == "Pre-pandemic"))` sera that were 
+collected in our cohort prior to the emergence of SARS-CoV-2 in Brazil 
+(September to November 2019) and stored in a serorepository at Fiocruz to 
+determine cutoffs for serum anti-S and anti-N IgG levels. We additionally 
+measured antibody levels in serum (N = 
+`r nrow(subset(datunexp, source == "HCW" & type == "Serum"))`) and saliva (N = 
+`r nrow(subset(datunexp, source == "HCW" & type == "Saliva"))`) samples that 
+were collected prior to infection or vaccination in a previously described 
+cohort of healthcare workers and stored at -80°C at Yale University. Samples 
+were obtained from a total of 
+`r subset(datunexp, source == "HCW") %>% select(randid) %>% unlist() %>% unique() %>% length()` 
+healthcare workers, and whenever possible we used serum and saliva samples 
+collected concurrently from the same individual. Anterior nasal swabs were 
+collected from March to May 2018 in a cohort of 
+`r subset(datunexp, source == "LTCF") %>% nrow()` residents and employees of a 
+long-term care facility. Samples were stored at -80°C at the University of 
+Florida and shipped on dry ice to Yale University for analysis. Using these 
+known negative samples, we defined the cutoffs for positivity in each type of 
+specimen (serum, saliva, nasal) based on the upper prediction limit of the 
+Student t-distribution at a 99.0% confidence level.
+
+```{r mucosal, include = T, fig.height = 9, fig.width = 12}
+
+# Mucosal responses
+# Interval of sample collection among participants with prior infection
+colint <- subset(dat1.comp, exposure2 == "Seroconversion at Survey 1") %>%
+  mutate(diff = intcol / 30.5) %>% # divide by average 30.5 days per month
+  summarize(diff = median(diff, na.rm = T)) %>%
+  unlist() %>% unname()
+
+# Individuals with positive mucosal responses among seronegative and unvaccinated
+tabpos <- datelisa %>% subset(exposure2 == "Seronegative") %>%
+  mutate(pos = value >= cut1) %>%
+  subset(type != "Serum") %>%
+  subset(!grepl("RBD", Ig)) %>%
+  group_by(randid) %>%
+  summarize(npos = sum(pos == T & type == "Nasal"),
+            spos = sum(pos == T & type == "Saliva")) %>%
+  ungroup() %>%
+  summarise(ntot = sum(npos > 0, na.rm = T), stot = sum(spos > 0, na.rm = T),
+            npct = mean(npos > 0, na.rm = T), spct = mean(spos > 0, na.rm = T),
+            n = n())
+
+```
+
+<br>
+
+Nasal and salivary antibodies remained detectable when measured a median 
+`r sprintf("%.1f", colint)` months after seroconversion. 
+`r tabpos$ntot`/`r tabpos$n` (`r sprintf("%.f", tabpos$npct * 100)`%, 95% CI 
+`r sprintf("%.1f", prop.test(tabpos$ntot, tabpos$n)$conf.int[1]*100)`-
+`r sprintf("%.1f", prop.test(tabpos$ntot, tabpos$n)$conf.int[1]*100)`%) 
+individuals who had been categorized as unvaccinated and seronegative based on 
+serum anti-S IgG levels were found to have detectable Anti-S or anti-N responses
+in the nasal compartment, and `r tabpos$stot`/`r tabpos$n` 
+(`r sprintf("%.f", tabpos$spct * 100)`%, 95% CI 
+`r sprintf("%.1f", prop.test(tabpos$stot, tabpos$n)$conf.int[1]*100)`-
+`r sprintf("%.1f", prop.test(tabpos$stot, tabpos$n)$conf.int[1]*100)`%) had 
+detectable responses in the salivary compartment.
+
+<br>
+<br>
+
+**Figure 5: Peripheral and mucosal antibody responses are differentially expressed across tissue compartments and by exposure history**  
+
+```{r fig5a, eval = T, include = F, fig.height = 9, fig.width = 26}
+
+# # Identify outliers
+# tmpout <- dat1.comp %>%
+#   select(c("randid", "exposure2", contains("ngml.S2"))) %>%
+#   pivot_longer(cols = contains("ngml")) %>%
+#   group_by(name) %>%
+#   mutate(mean = mean(value, na.rm = T), sd = sd(value, na.rm = T)) %>%
+#   ungroup() %>%
+#   mutate(limit = mean + 3.5*sd) %>%
+#   mutate(out = value > limit) %>%
+#   group_by(randid) %>%
+#   mutate(numout = sum(out, na.rm = T)) %>%
+#   select(c(randid, numout)) %>%
+#   unique() %>%
+#   subset(numout >= 1) %>%
+#   arrange(desc(numout))
+
+datmuc <- dat1.comp %>%
+  select(c("randid", "exposure2", contains("ngml.S2"))) %>%
+  dplyr::rename_all(~stringr::str_replace_all(., ".ngml.S2", "")) %>%
+  # subset(!randid %in% c(tmpout$randid[1])) %>%
+  select(-contains("Serum.RBD")) %>%
+  filter(complete.cases(.) == T) %>%
+  column_to_rownames("randid") %>%
+  rename(Exposure = exposure2)
+ 
+annotation_col <- select(datmuc, c("Exposure")) %>% mutate(Exposure = factor(Exposure))
+
+ann_colors = list(
+  Exposure = c(Seronegative = expcols[2],
+                Vaccinated = expcols[3],
+                `Seroconversion at Survey 1` = expcols[4],
+                `Seroconversion at Survey 2` = expcols[5],
+                `Seroconversion & vaccination` = expcols[6],
+                `Inferred reinfection` = expcols[7])
+)
+
+# Test a couple of different clustering parameters
+# methvec <- c("ward.D", "ward.D2")
+# distvec <- c("euclidean", "manhattan")
+# plotlist1 <- list()
+# for(i in 1:length(methvec)){
+#   for(j in 1:length(distvec)){
+#     
+#   numrun <- (length(distvec)*(i-1))+ j
+#     
+#   p1 <- pheatmap(t(log(select(datmuc, -"Exposure"))),
+#                 scale = "row", 
+#                 color = colorRampPalette(c("#f5eb98", "#e32817", "#db32a9", "#2f084d"))(100),
+#                 breaks = seq(-0.75, 2, length.out = 100),
+#                 legend_labels = c("Low", "High"), legend_breaks = c(-0.5, 2),
+#                 cellwidth = 5, cellheight = 10,
+#                 cutree_col = 6,
+#                 cluster_cols = T, cluster_rows = F,
+#                 clustering_method = methvec[i],
+#                 clustering_distance_cols = distvec[j],
+#                 annotation_legend = T,
+#                 annotation_colors = ann_colors,
+#                 annotation_col = annotation_col,
+#                 show_rownames = T,
+#                 show_colnames = F,
+#                 gaps_row = c(4, 10),
+#                 main = paste(methvec[i], distvec[j], sep = ", ")
+#   )
+#     
+#   plotlist1[[numrun]] <- p1
+#   }
+# }
+# 
+# ggarrange(plotlist1)
+# Final choice
+
+
+heatplot <- pheatmap(t(log(select(datmuc, -"Exposure"))),
+         scale = "row", 
+         color = colorRampPalette(c("#f5eb98", "#e32817", "#db32a9", "#2f084d", "#270540"))(100),
+         breaks = seq(-0.75, 2, length.out = 100),
+         legend_labels = c("Low", "High"), legend_breaks = c(-0.5, 2),
+         cellwidth = 3, cellheight = 5,
+         cutree_col = 6,
+         cluster_cols = T, cluster_rows = F,
+         clustering_method = "ward.D",
+         clustering_distance_cols = "manhattan",
+         annotation_legend = T,
+         annotation_colors = ann_colors,
+         annotation_col = annotation_col,
+         show_rownames = T,
+         show_colnames = F,
+         gaps_row = c(4, 10),
+         silent = T,
+         labels_row = str_replace_all(colnames(datmuc)[-1], 
+                                      c("[.]" = " ", "Stotal" = "S total",
+                                        "Serum|Nasal|Saliva" = "")))
+
+
+# Extract clusters
+heatplot.clust <- cbind(datmuc, cluster = cutree(heatplot$tree_col, k = 6))
+
+# Order of clusters
+clust.order <- data.frame(
+  cluster = heatplot.clust$cluster[heatplot$tree_col[["order"]]]) %>%
+  unique()
+
+# Make piecharts
+pielist <- list(rep(NULL, 6))
+
+for(i in 1:nrow(clust.order)){
+  
+  dattmp <- heatplot.clust %>%
+    subset(cluster == clust.order$cluster[i]) %>%
+    select(c("Exposure", "cluster")) %>%
+    group_by(Exposure) %>%
+    summarise(n = n()) %>%
+    arrange(desc(Exposure)) %>%
+    mutate(prop = n / sum(n) *100) %>%
+    mutate(ypos = cumsum(prop) - 0.5*prop) %>%
+    ungroup() %>%
+    arrange(Exposure) 
+  
+  p <- dattmp %>%
+    ggplot(aes(x = "", y = prop, fill = Exposure)) +
+    geom_bar(stat = "identity", width = 1, color = "gray75") +
+    geom_text(aes(label = paste0(round(prop), "%"), y = ypos, x = 1.85,
+                  color = Exposure), size = 3.2) +
+    coord_polar("y", start = 0) +
+    theme_void() +
+    theme(legend.position = "none", plot.margin = unit(rep(0, 4), "lines")) +
+    scale_fill_manual("Exposure", breaks = levels(datmuc$Exposure),
+                     labels = levels(datmuc$Exposure),
+                     values = expcols[2:7]) +
+    scale_color_manual("Exposure", breaks = levels(datmuc$Exposure),
+                     labels = levels(datmuc$Exposure),
+                     values = expcols[2:7]) +
+    ggtitle("")
+  
+  pielist[[i]] <- p
+}
+
+# Chi squared test for distribution of exposures across clusters
+heatpval <- heatplot.clust %>%
+  select(c("Exposure", "cluster")) %>%
+  table() %>% chisq.test()
+
+# Fisher exact test
+heatfisherpval <- heatplot.clust %>%
+  select(c("Exposure", "cluster")) %>%
+  table() %>%
+  fisher.test(workspace = 2e8, simulate.p.value = T, 1e6)
+
+# Table of OR/CI of exposure history by cluster
+heatplot.n <- heatplot.clust %>%
+  select(c("Exposure", "cluster")) %>%
+  group_by(cluster, Exposure) %>%
+  dplyr::summarise(n = n())
+
+heatplot.or <- expand.grid(Exposure = levels(heatplot.clust$Exposure), 
+                           cluster = unique(heatplot.clust$cluster)) %>% 
+  merge(heatplot.n, by = c("Exposure", "cluster"), all = T) %>%
+  # Fill in zero cells with 0.5 for OR and CI calculations
+  mutate(n = replace(n, is.na(n), 0)) %>%
+  # Continuity correction
+  # mutate(n = n + 0.5) %>%
+  group_by(cluster) %>%
+  # total in cluster
+  mutate(ctot = sum(n)) %>%
+  ungroup() %>%
+  mutate(cprop = n/ctot) %>%
+  group_by(Exposure) %>%
+  # total in exposure group
+  mutate(etot = sum(n)) %>%
+  ungroup() %>%
+  # grand total
+  mutate(N = sum(n)) %>%
+  mutate(eprop = etot / N) %>%
+  # Build components of 2x2 tables 
+  mutate(a = n, b = ctot - n, c = etot - n, d = N - etot - ctot + n, 
+         n1 = ctot, n2 = N - ctot) %>%
+  mutate(or = (a/b) / (c/d)) %>%
+  mutate(orlci = NA, oruci = NA)
+
+for(i in 1:nrow(heatplot.or)){
+  tmp <- select(heatplot.or, c("a", "n1", "c", "n2"))[i, ]
+  heatplot.or$orlci[i] <- orscoreci(tmp$a, tmp$n1, tmp$c, tmp$n2, 0.95)$conf.int[1]
+  heatplot.or$oruci[i] <- orscoreci(tmp$a, tmp$n1, tmp$c, tmp$n2, 0.95)$conf.int[2]
+}
+
+heatplot.or <- heatplot.or %>%
+  # mutate(orlci = orscoreci(a, n1, c, n2, 0.95)$conf.int[1])
+  # mutate(orlci = exp(log(or) - 1.96*sqrt(1/a + 1/b + 1/c + 1/d))) %>%
+  # mutate(oruci = exp(log(or) + 1.96*sqrt(1/a + 1/b + 1/c + 1/d))) %>%
+  # mutate(rr = (a/(a+b)) / (c/(c+d))) %>%
+  # mutate(rrlci = exp(log(rr) - 1.96*sqrt(b/(a*(a+b)) + d/(c*(c+d))))) %>%
+  # mutate(rruci = exp(log(rr) + 1.96*sqrt(b/(a*(a+b)) + d/(c*(c+d))))) %>%
+  mutate(sigor = (orlci < 1 & oruci < 1) | (orlci > 1 & oruci > 1)) %>%
+  # mutate(sigrr = (rrlci < 1 & rruci < 1) | (rrlci > 1 & rruci > 1)) %>%
+  mutate(orchr = paste0(sprintf("%.2f", or), ifelse(sigor == T & !is.na(sigor), "*", ""))) %>%
+  # mutate(rrchr = paste0(sprintf("%.2f", rr), ifelse(sigrr == T & !is.na(sigor), "*", ""))) %>%
+  mutate(cluster2 = case_when(cluster == clust.order$cluster[1] ~ "Saliva only",
+                              cluster == clust.order$cluster[2] ~ "Antibody-low",
+                              cluster == clust.order$cluster[3] ~ "Saliva-high",
+                              cluster == clust.order$cluster[4] ~ "Serum-high",
+                              cluster == clust.order$cluster[5] ~ "Nasal-high",
+                              cluster == clust.order$cluster[6] ~ "Saliva-low")) %>%
+  mutate(orcomp = paste0(sprintf("%.2f", or), " (", sprintf("%.2f", orlci), " - ", sprintf("%.2f", oruci), ")"))
+
+heatplot.or2 <- heatplot.or %>%
+  select(c("cluster2", "Exposure", "orcomp", "sigor")) %>%
+  # Fill in all missing combinations
+  pivot_wider(id_cols = c("cluster2"), names_from = "Exposure",
+              values_from = c("orcomp", "sigor")) %>%
+  pivot_longer(cols = !cluster2, names_to = c(".value", "Exposure"),
+               names_pattern = "(.+)_(.+)") %>%
+  mutate(orcomp = replace(orcomp, is.na(orcomp), "0")) 
+
+heatplot.or3 <- heatplot.or2 %>% 
+  pivot_wider(id_cols = "Exposure", names_from = "cluster2", values_from = "orcomp") %>%
+  mutate(Exposure = ordered(Exposure, levels = levels(dat1.comp$exposure2))) %>%
+  arrange(Exposure) %>%
+  select(c(1, clust.order$cluster + 1)) %>%
+  column_to_rownames("Exposure")
+
+# Format table grob 
+heatplot.form <- heatplot.or2 %>% 
+  pivot_wider(id_cols = "Exposure", names_from = "cluster2", values_from = "sigor") %>%
+  mutate(Exposure = ordered(Exposure, levels = levels(dat1.comp$exposure2))) %>%
+  arrange(Exposure) %>%
+  select(c(1, clust.order$cluster + 1)) %>%
+  column_to_rownames("Exposure") %>%
+  mutate_all(function(x)(ifelse(x == T & !is.na(x), "bold", "plain")))
+
+separators <- replicate(5,
+                     segmentsGrob(x1 = unit(0, "npc"), 
+                                  gp = gpar(lwd = 1, col = "darkgray")),
+                     simplify = FALSE)          
+
+tabgrob <- tableGrob(heatplot.or3, theme = ttheme_minimal(
+  core=list(fg_params=list(hjust = 0, x = 0.1, fontsize = 12,
+                           fontface = c(unlist(heatplot.form))),
+            padding = unit(c(10, 3), "mm")),
+  colhead = list(fg_params = list(fontsize = 12)),
+  rowhead = list(fg_params = list(fontsize = 12), padding = unit(c(4, 2), "mm"))
+  )
+) %>% 
+  gtable_add_grob(
+    grobs = rectGrob(gp = gpar(lwd = 2, fill = NA, col = "darkgray")), 
+    t = 2, b = nrow(heatplot.or3) + 1, l = 2, r = ncol(heatplot.or3) + 1
+    ) %>%
+  gtable_add_grob(
+    grobs = separators, t = 2, b = nrow(heatplot.or3) + 1, l = 3:7) 
+
+# Combine heat map, pie charts, and other grobs
+# Relative widths of each cluster
+clust.size <- heatplot.clust %>% group_by(cluster) %>%
+  summarise(n = n())
+
+# Spacing
+spacevec <- clust.size$n[clust.order$cluster][1]
+for(i in 2:length(clust.size$n[clust.order$cluster])){
+  prespace <- (clust.size$n[clust.order$cluster][i-1] - min(clust.size$n[clust.order$cluster]))/2
+  postspace <- (clust.size$n[clust.order$cluster][i] - min(clust.size$n[clust.order$cluster]))/2
+  totspace <- prespace + postspace
+  
+  if(i < length(clust.size$n[clust.order$cluster])){
+    spacevec <- c(spacevec, totspace, min(clust.size$n[clust.order$cluster]))
+  } else {
+    spacevec <- c(spacevec, totspace, min(clust.size$n[clust.order$cluster]),
+                  postspace)
+  }
+}
+
+# arrange on grid
+# legend annotation
+glegannot <- textGrob("                     Relative concentration", 
+                      just = "center", rot = 90, gp = gpar(fontface = "bold"))
+# Labels
+glaba <- textGrob("a", just = "left", vjust = 0, gp = gpar(fontface = "bold"))
+glabb <- textGrob("b", just = "left", vjust = 0, gp = gpar(fontface = "bold"))
+glabc <- textGrob("c", just = "left", vjust = 0, gp = gpar(fontface = "bold"))
+# Cluster labels
+glabclust1 <- textGrob("Saliva-only", just = "center",
+                       gp = gpar(fontface = "bold"))
+glabclust2 <- textGrob("Antibody-low", just = "center",
+                       gp = gpar(fontface = "bold"))
+glabclust3 <- textGrob("Saliva-high", just = "center",
+                       gp = gpar(fontface = "bold"))
+glabclust4 <- textGrob("Serum-high", just = "center",
+                       gp = gpar(fontface = "bold"))
+glabclust5 <- textGrob("Nasal-high", just = "center",
+                       gp = gpar(fontface = "bold"))
+glabclust6 <- textGrob("Saliva-low", just = "center",
+                       gp = gpar(fontface = "bold"))
+
+# Significance label
+gsegsig <- segmentsGrob(x0 = unit(0, "npc"), y0 = unit(0, "npc"),
+              x1 = unit(1, "npc"), y1 = unit(0, "npc"),
+              default.units = "npc")
+gvalsig<- textGrob(
+  paste0("p", ifelse(heatpval$p.value < 0.001, "<0.001", 
+                     paste0("=", round(heatpval$p.value, 2)))),
+  just = "center", vjust = 1, gp = gpar(fontface = "bold", fontsize = 10)
+)
+
+# Row labels
+rlabser <- textGrob("Serum", just = "center", rot = 90, 
+                    gp = gpar(col = "#8a712d", fontface = "bold"))
+rlabnas <- textGrob("Nasal", just = "center", rot = 90, 
+                    gp = gpar(col = "#2d888a", fontface = "bold"))
+rlabsal <- textGrob("Saliva", just = "center", rot = 90, 
+                    gp = gpar(col = "#a83d64", fontface = "bold"))
+
+gsegrowser <- segmentsGrob(x0 = unit(0, "npc"), y0 = unit(0.1, "npc"),
+              x1 = unit(0, "npc"), y1 = unit(0.9, "npc"),
+              default.units = "npc", gp = gpar(col = "#8a712d", lwd = 1.5))
+
+gsegrownas <- segmentsGrob(x0 = unit(0, "npc"), y0 = unit(0.1, "npc"),
+              x1 = unit(0, "npc"), y1 = unit(0.9, "npc"),
+              default.units = "npc", gp = gpar(col = "#2d888a", lwd = 1.5))
+
+gsegrowsal <- segmentsGrob(x0 = unit(0, "npc"), y0 = unit(0.1, "npc"),
+              x1 = unit(0, "npc"), y1 = unit(0.9, "npc"),
+              default.units = "npc", gp = gpar(col = "#a83d64", lwd = 1.5))
+
+# List it all
+addlist <- list(glegannot, glaba, glabb, glabc, glabclust1, glabclust2,
+                glabclust3, glabclust4, glabclust5, glabclust6, tabgrob,
+                gsegsig, gvalsig, rlabser, rlabnas, rlabsal, gsegrowser,
+                gsegrownas, gsegrowsal)
+
+```
+
+```{r fig5b, eval = T, include = T, fig.height = 9, fig.width = 16}
+
+grid.arrange(
+  grobs = c(
+    heatplot$gtable$grobs[-5],
+    pielist,
+    addlist),
+  widths = c(10, 3, 0.5, 10, spacevec, 5, 30),
+  heights = c(1, 2, 3, 5, 5, -0.4, 0.95, 0.95, 0.5, 0.5, 6, 1, 8),
+  layout_matrix = rbind(c(15, NA, NA, NA, 18, NA, 19, NA, 20, NA, 21, NA, 22, NA, 23, NA, NA, NA),
+                        c(NA, NA, NA, NA, rep(1, 12), 14, NA),
+                        c(NA, 27, 30, 3, rep(2, 12), 14, 7),
+                        c(NA, 28, 31, 3, rep(2, 12), 14, 7),
+                        c(NA, 29, 32, 3, rep(2, 12), 14, 7),
+                        
+                        
+                        c(NA, rep(NA, 15), NA, 6),
+                        c(NA, NA, NA, NA, rep(4, 12), NA, NA),
+                        c(NA, NA, NA, rep(NA, 15)),
+                        c(16, NA, NA, NA, rep(26, 12), rep(NA, 2)),
+                        c(NA, NA, NA, NA, NA, rep(25, 9), rep(NA, 4)),
+                        c(NA, NA, NA, NA, 8, NA, 9, NA, 10, NA, 11, NA, 12, NA, 13, NA, NA, 6),
+                        c(17, NA, NA, rep(NA, 15)),
+                        c(NA, NA, NA, rep(24, 12), NA, NA, NA))
+)
+  
+```
+
+
+**a**, Unsupervised hierarchical clustering of SARS-CoV-2 specific antibody 
+responses among individual participants. The color scale indicates the relative
+magnitude of response for each antibody, with low responses shown in yellow and
+high responses shown in purple. Six clusters were identified and are labeled. 
+The color scale on the bottom depicts the serum-inferred exposure histories. 
+**b**, Summative composition of the inferred exposure histories by cluster. 
+The distribution of serum-inferred exposure histories differed significantly 
+across clusters (Fisher's exact test p-value 
+`r ifelse(heatfisherpval$p.value < 0.001, "<0.001", round(heatfisherpval$p.value, 2))`).
+**c**, Odds ratios for the 
+association between serum-inferred exposure histories and antibody expression
+clusters. Statistically significant associations are shown in bold font.  
+
+<br>
+<br>
+
+**Figure 6: Breadth of serum neutralization activity is associated with more robust antibody response at mucosal sites**
+
+
+```{r broad, eval = T, include = T, fig.height = 9, fig.width = 16}
+
+# Minimum positive (log PRNT >1.1) Omicron response in samples from Survey 2
+# (No mucosal ELISAs available at Survey 1)
+
+broadthresh <- dat1.comp %>% 
+  select("PRNT50.Omicron.S2") %>% 
+  pivot_longer(cols = everything()) %>% 
+  subset(value > 1.1 & !is.na(value)) %>% 
+  dplyr::summarise(min = min(value)) %>% sprintf("%.3f", .)
+
+
+# Label broad vs poor neutralizers
+datbroad <- dat1.comp %>%
+  mutate(neut.cat = NA) %>%
+  # Broad neutralizer: above threshold for all variants
+  mutate(neut.cat = replace(neut.cat, 
+                            PRNT50.Ancestral.S2 >= broadthresh &
+                              PRNT50.Delta.S2 >= broadthresh &
+                              PRNT50.Gamma.S2 >= broadthresh &
+                              PRNT50.Omicron.S2 >= broadthresh,
+                            "broad")) %>%
+  # Poor neutralizers: below threshold for all variants
+  mutate(neut.cat = replace(neut.cat, 
+                            PRNT50.Ancestral.S2 < broadthresh &
+                              PRNT50.Delta.S2 < broadthresh &
+                              PRNT50.Gamma.S2 < broadthresh &
+                              PRNT50.Omicron.S2 < broadthresh,
+                            "poor")) %>%
+  # Mid neutralizers: have full PNRT data, but neither broad nor poor
+  mutate(neut.cat = replace(neut.cat,
+                            is.na(neut.cat) &
+                              !is.na(PRNT50.Ancestral.S2) &
+                              !is.na(PRNT50.Delta.S2) &
+                              !is.na(PRNT50.Gamma.S2) &
+                              !is.na(PRNT50.Omicron.S2),
+                            "mid"))
+  
+nbroad <- nrow(subset(datbroad, neut.cat == "broad"))
+
+npoor <- nrow(subset(datbroad, neut.cat == "poor"))
+
+```  
+ 
+
+The lowest positive PRNT against the Omicron variant in our samples was
+`r broadthresh`.
+We therefore selected this as the cutoff to identify individuals with broad
+(PRNT >= `r broadthresh`, n = `r nbroad`) against all four variants vs. poor 
+(PRNT < `r broadthresh` against all variants, n = `r npoor`) serum neutralization
+activity.
+
+
+```{r fig6del, eval = T, include = T, fig.height = 9, fig.width = 16}
+
+#TODO: probably delete this whole chunk
+
+# Identify number of positive IgA mucosal compartments
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Nasal|Saliva).+IgA.ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type,
+#               values_from = sumpos, names_prefix = "posIgA.") %>%
+#   mutate(posIgA.Nasal = posIgA.Nasal >= 1) %>%
+#   mutate(posIgA.Saliva = posIgA.Saliva >= 1) %>%
+#   # Number of positive compartments
+#   mutate(posIgA.total = posIgA.Nasal + posIgA.Saliva)
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+
+# TODO: replication of Figure 6b; unable to achieve same results
+# Was a different threshold used?
+
+# Identify number of positive IgA/IgG mucosal compartments
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Nasal|Saliva).+ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type, 
+#               values_from = sumpos, names_prefix = "posIg.") %>%
+#   mutate(posIg.Nasal = posIg.Nasal >= 1) %>%
+#   mutate(posIg.Saliva = posIg.Saliva >= 1) %>%
+#   # Number of positive compartments
+#   mutate(posIg.total = posIg.Nasal + posIg.Saliva) 
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+# 
+# datbroad2 %>%
+#   subset(neut.cat %in% c("poor", "broad")) %>%
+#   group_by(posIg.total, neut.cat) %>%
+#   summarize(n = n()) %>%
+#   group_by(neut.cat) %>%
+#   mutate(tot = sum(n)) %>%
+#   mutate(prop = n/tot) %>%
+#   # compute confidence intervals
+#   mutate(ci = qnorm(0.975) * sqrt((prop * (1 - prop)) / tot)) %>%
+#   mutate(lci = prop - ci, uci = prop + ci) %>%
+#   ggplot() +
+#   geom_pointrange(aes(x = factor(posIg.total), y = prop, ymin = lci, ymax = uci, 
+#                       group = neut.cat, col = neut.cat), 
+#                   position = position_dodge(0.2)) +
+#   ylab("Proportion") +
+#   scale_x_discrete("Number of Ig-positive mucosal compartments") +
+#   scale_color_discrete("", labels = c("Broad neutralizers", "Poor neutralizers")) +
+#   theme_classic()
+
+# Try with total number of positive IgA results 
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Nasal|Saliva).+IgA.ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type,
+#               values_from = sumpos, names_prefix = "posIgA.") %>%
+#   # Total number of positive IgA results
+#   mutate(posIgA.total = posIgA.Nasal + posIgA.Saliva)
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+
+# No dice
+
+# Try with just saliva or just nasal
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Saliva).+IgA.ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type,
+#               values_from = sumpos, names_prefix = "posIgA.") %>%
+#   # Total number of positive IgA results
+#   mutate(posIgA.total = posIgA.Saliva)
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+
+# No dice
+
+
+# Correlation of positive responses
+# tmp.muc2 <- datbroad %>%
+#   select(c("randid", matches("ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   select(-c("cut", "value")) %>%
+#   pivot_wider(id_cols = randid, names_from = c("type", "var"), 
+#               values_from = posyn, names_glue = "{type}.{var}.{.value}")
+#   
+# datbroad3 <- merge(datbroad, tmp.muc2, by = "randid")
+# 
+# 
+# combos <- combn(colnames(datbroad3)[c(56:57, 60:63, 66:69, 72:73)], 2)
+# for(i in 1: ncol(combos)){
+#   tmp <- datbroad3[, combos[1, i]] == T & datbroad3[, combos[2, i]]
+#   datbroad3[, paste0(combos[, i], collapse = "/")] <- tmp
+# }
+# 
+# levvec <- c('Nasal.N.IgA', 'Nasal.N.IgG', 'Nasal.Stotal.IgA', 'Nasal.Stotal.IgG', 
+#             'Saliva.N.IgA', 'Saliva.N.IgG', 'Saliva.Stotal.IgA', 'Saliva.Stotal.IgG', 
+#             'Serum.N.IgA', 'Serum.N.IgG', 'Serum.Stotal.IgA', 'Serum.Stotal.IgG')
+# 
+# tmpwide2 <- datbroad3 %>%
+#   dplyr::select(c("randid", contains("/"))) %>%
+#   summarise_all(mean) %>%
+#   pivot_longer(contains("/"), names_to = c("var1", "var2"),
+#                names_pattern = "(.+)\\/(.+)", values_to = "poverlap") %>%
+#   group_by(var1, var2) %>%
+#   summarise(lint = quantile(poverlap, 0.025),
+#             uint = quantile(poverlap, 0.975),
+#             liqr = quantile(poverlap, 0.25),
+#             uiqr = quantile(poverlap, 0.75),
+#             med = quantile(poverlap, 0.5),
+#             min = min(poverlap),
+#             max = max(poverlap)) %>%
+#   ungroup() %>%
+#   mutate(var1 = str_replace(var1, ".ngml.posyn", ""),
+#          var2 = str_replace(var2, ".ngml.posyn", ""))
+# 
+# ggplot(tmpwide2) +
+#   scale_fill_gradient2(" % positive",
+#                        low = "blue", high = "red", mid = "white",
+#                        midpoint = 50, lim = c(0, 100)) +
+#   theme_classic() +
+#   geom_tile(aes(x = var1, y = var2, fill = med * 100)) +
+#   geom_text(aes(x = var1, y = var2, label = sprintf("%.0f", med*100)), size = 3) +
+#   theme(legend.position = c(0.9, 0.75)) +
+#   theme(axis.text.x.bottom = element_text(angle = 90)) +
+#   # scale_x_discrete("", limits = rev(levvec)[-12], expand = c(0, 0)) +
+#   scale_y_discrete("", expand = c(0, 0))  +
+#   theme(axis.text.x = element_text(hjust = 1),
+#         axis.ticks = element_blank(),
+#         axis.line = element_blank())
+
+```
+
+
+
+
+```{r fig6a, eval = T, include = T, fig.height = 9, fig.width = 16}
+
+# TODO: Decide on Panel B
+# TODO: Put together final panel
+
+# Source functions
+source("MucosalImmunity_Functions.R")
+
+# ELISA correlations across compartments
+datbroad2 <- select(datbroad, contains("ngml.S2")) %>%
+  pivot_longer(contains("Ig"), names_to = c(".value"),
+               names_pattern = "([[:alnum:]]+.[[:alnum:]]+.[[:alnum:]]+).[[:alnum:]]+.[[:alnum:]]+")
+
+colseq <- c(rep("#a83d64", 6), rep("#2d888a", 6), rep("#8a712d", 6))
+bootrep <- 9999 # Number of bootstrap replicates
+
+# Generate matrices
+mt1 <- mycorboot(select(datbroad2, rev(colnames(datbroad2))), 
+                        method = "pearson", numrep = bootrep, cimethod = "perc")
+
+# Generate plot
+mt1 <- mt1 %>% select(c("row_names", "variable", "x1", "y", 
+                        "coeff_boot", "pval_boot")) %>%
+  rename(coeff = coeff_boot, pval = pval_boot)
+
+pcorr1 <- mycorrplot(mt1, colseq = colseq, diaglab = F, xlab = T, ylab = T,
+                   size_legend = F, labsize = 12, min_size = 2)
+
+# Broad neutralizers
+datbroad2b <- subset(datbroad, neut.cat == "broad") %>%
+  select(contains("ngml.S2")) %>%
+  pivot_longer(contains("Ig"), names_to = c(".value"),
+               names_pattern = "([[:alnum:]]+.[[:alnum:]]+.[[:alnum:]]+).[[:alnum:]]+.[[:alnum:]]+")
+
+mt2 <- mycorboot(select(datbroad2b, rev(colnames(datbroad2b))), 
+                 method = "pearson", numrep = bootrep, cimethod = "perc")
+
+mt2 <- mt2 %>% select(c("row_names", "variable", "x1", "y", 
+                        "coeff_boot", "pval_boot")) %>%
+  rename(coeff = coeff_boot, pval = pval_boot)
+
+pcorr2 <- mycorrplot(mt2, colseq = colseq, diaglab = T, xlab = T, ylab = F,
+                   size_legend = F, labsize = 12, flip_x = T, siggbox == T, 
+                   min_size = 2)
+
+pcorr2b <- mycorrplot(mt2, colseq = colseq, diaglab = F, xlab = T, ylab = T,
+                   size_legend = F, labsize = 12, siggbox = T, min_size = 2)
+
+# Poor neutralizers
+datbroad2c <- subset(datbroad, neut.cat == "poor") %>%
+  select(contains("ngml.S2")) %>%
+  pivot_longer(contains("Ig"), names_to = c(".value"),
+               names_pattern = "([[:alnum:]]+.[[:alnum:]]+.[[:alnum:]]+).[[:alnum:]]+.[[:alnum:]]+")
+
+mt3 <- mycorboot(select(datbroad2c, rev(colnames(datbroad2c))),
+                 method = "pearson", numrep = bootrep, cimethod = "perc")
+
+mt3 <- mt3 %>% select(c("row_names", "variable", "x1", "y", 
+                        "coeff_boot", "pval_boot")) %>%
+  rename(coeff = coeff_boot, pval = pval_boot)
+
+pcorr3 <- mycorrplot(mt3, colseq = colseq, diaglab = T, xlab = T, ylab = F,
+                   size_legend = F, labsize = 12, flip_x = F, siggbox = T, 
+                   min_size = 2)
+
+pcorr3b <- mycorrplot(mt3, colseq = colseq, diaglab = F, xlab = T, ylab = T,
+                   size_legend = F, labsize = 12, siggbox = T, min_size = 2)
+
+legtemp <- get_legend(pcorr1)
+
+# ggarrange(pcorr1 + ggtitle("All"), 
+#           pcorr2b + ggtitle("Broad neutralizers"),
+#           pcorr3b + ggtitle("Poor neutralizers"),
+#           as_ggplot(legtemp),
+#           nrow = 1, legend = "none", widths = c(rep(5, 3), 1),
+#           labels = c(mylabels[1:3], ""), font.label = labform)  &
+#   theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"),
+#         plot.title = element_text(hjust = 0.5))
+
+pcorr1
+
+```
+
+
+
+```{r fig6b, eval = T, include = T, fig.height = 9, fig.width = 16}
+ggarrange(pcorr3 + ggtitle("Poor neutralizers") + 
+            theme(plot.title = element_text(hjust = 0.5, size = 14), 
+                  plot.margin = margin(0, 0, 0, 0)),
+          pcorr2 + ggtitle("Broad neutralizers") +
+            theme(plot.title = element_text(hjust = 0.5, size = 14), 
+                  plot.margin = margin(0, 0, 0, 0)),
+          as_ggplot(legtemp),
+          nrow = 1, legend = "none", widths = c(rep(4, 2), 1),
+          labels = c(mylabels[1])) 
+
+```
+
+
+**a**, Heatmap of pairwise (Pearson) correlations of SARS-CoV-2 specific 
+antibody responses within and across tissue compartments. Only statistically 
+significant correlations are displayed. The size of each circle is proportional
+to (1 / p-value). 
+**b**, Proportion of individuals with broad serum neutralization activity among 
+those with positive IgA responses in the mucosal compartments. Statistical 
+significance was assessed using the Cochran-Armitage trend test (p=0.044). 
+**c**, Bootstrapped pairwise (Pearson) correlations of SARS-CoV-2 specific 
+antibody responses across tissue sites in the poor neutralization and broad 
+neutralization groups. Color intensity indicates the degree of positive 
+(darker red) or negative (darker blue) correlation for each comparison.
+Only correlations that met the statistical significance threshold after 
+bootstrapping are shown. Cells reflecting intercompartmental correlations of 
+anti-S IgG are shaded in gray for easy visualization.
+
+<br>
+<br>
+
+```{r fig6deltest, eval = F, include = F, fig.height = 9, fig.width = 16}
+
+#TODO: probably delete this whole chunk
+
+# Identify number of positive IgA mucosal compartments
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Nasal|Saliva).(Stotal|RBD).IgA.ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   subset(!is.na(value)) %>%
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type,
+#               values_from = sumpos, names_prefix = "posIgA.") %>%
+#   mutate(posIgA.Nasal = posIgA.Nasal >= 1) %>%
+#   mutate(posIgA.Saliva = posIgA.Saliva >= 1) %>%
+#   # Number of positive compartments
+#   mutate(posIgA.total = posIgA.Nasal + posIgA.Saliva)
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+# 
+# datbroad2 %>%
+#   group_by(posIgA.total, neut.cat) %>%
+#   summarise(n = n()) %>%
+#   group_by(neut.cat) %>%
+#   mutate(tot = sum(n)) %>%
+#   mutate(prop = n/tot) %>%
+#   # compute confidence intervals
+#   mutate(ci = qnorm(0.975) * sqrt((prop * (1 - prop)) / tot)) %>%
+#   mutate(lci = prop - ci, uci = prop + ci) %>%
+#   ggplot() +
+#   geom_pointrange(aes(x = factor(posIgA.total), y = prop, ymin = lci, ymax = uci,
+#                       group = neut.cat, col = neut.cat),
+#                   position = position_dodge(0.2)) +
+#   ylab("Proportion") +
+#   scale_x_discrete("Number of IgA-positive mucosal compartments") +
+#   scale_color_discrete("", labels = c("Broad neutralizers", "Poor neutralizers")) +
+#   theme_classic()
+
+# TODO: replication of Figure 6b; unable to achieve same results
+# Was a different threshold used?
+
+# Identify number of positive IgA/IgG mucosal compartments
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Nasal|Saliva).+ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type, 
+#               values_from = sumpos, names_prefix = "posIg.") %>%
+#   mutate(posIg.Nasal = posIg.Nasal >= 1) %>%
+#   mutate(posIg.Saliva = posIg.Saliva >= 1) %>%
+#   # Number of positive compartments
+#   mutate(posIg.total = posIg.Nasal + posIg.Saliva) 
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+
+# datbroad2 %>%
+#   group_by(posIg.total, neut.cat) %>%
+#   summarise(n = n()) %>%
+#   group_by(neut.cat) %>%
+#   mutate(tot = sum(n)) %>%
+#   mutate(prop = n/tot) %>%
+#   # compute confidence intervals
+#   mutate(ci = qnorm(0.975) * sqrt((prop * (1 - prop)) / tot)) %>%
+#   mutate(lci = prop - ci, uci = prop + ci) %>%
+#   ggplot() +
+#   geom_pointrange(aes(x = factor(posIg.total), y = prop, ymin = lci, ymax = uci,
+#                       group = neut.cat, col = neut.cat),
+#                   position = position_dodge(0.2)) +
+#   ylab("Proportion") +
+#   scale_x_discrete("Number of Ig-positive mucosal compartments") +
+#   scale_color_discrete("", labels = c("Broad neutralizers", "Poor neutralizers")) +
+#   theme_classic()
+
+# Try with total number of positive IgA results 
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Nasal|Saliva).+IgA.ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type,
+#               values_from = sumpos, names_prefix = "posIgA.") %>%
+#   # Total number of positive IgA results
+#   mutate(posIgA.total = posIgA.Nasal + posIgA.Saliva)
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+
+# No dice
+
+# Try with just saliva or just nasal
+# tmp.muc <- datbroad %>%
+#   select(c("randid", matches("(Saliva).+IgA.ngml.S2"))) %>%
+#   pivot_longer(cols = !randid, names_to = c("type", "var"),
+#                names_pattern = "(Serum|Saliva|Nasal).(.+.ngml).S2") %>%
+#   merge(select(cuttab, c("type", "var", "cut")), by = c("type", "var")) %>%
+#   mutate(posyn = value >= cut) %>%
+#   # Positive in saliva vs. nasal
+#   group_by(type, randid) %>%
+#   mutate(sumpos = sum(posyn)) %>%
+#   ungroup() %>%
+#   select(c("type", "randid", sumpos)) %>%
+#   unique() %>%
+#   pivot_wider(id_cols = randid, names_from = type,
+#               values_from = sumpos, names_prefix = "posIgA.") %>%
+#   # Total number of positive IgA results
+#   mutate(posIgA.total = posIgA.Saliva)
+# 
+# datbroad2 <- merge(datbroad, tmp.muc, by = "randid")
+
+# No dice
+
+
+```
+
+
+**Extended Data Table S1: Demographic characteristics and exposure history of study cohort**
+
+```{r tableS1, eval = T, include = T, fig.height = 9, fig.width = 16}
+
+# Custom render to get IQR (instead of range) for continuous variables in table1
+render.cont.iqr <- function(x, value.prefix = "= ") {
+  
+  mean <- mean(x, na.rm = TRUE)
+  median <- median(x, na.rm = T)
+  pct25 <- quantile(x, 0.25, na.rm = TRUE)
+  pct75 <- quantile(x, 0.75, na.rm = TRUE)
+  sd <- sd(x, na.rm = T)
+  
+  out <- c("",
+           "Mean (SD)" = paste0(sprintf("%.1f", mean), " (", sprintf("%.1f", sd), ")"),
+           "Median [IQR]" = paste0(sprintf("%.1f", median), " [", sprintf("%.1f", pct25),
+                                   " - ", sprintf("%.1f", pct75), "]"))
+  return(out)
+}
+
+# Create separate datasets for entire cohort, and subset included in assays
+datdemo1 <- dplyr::select(datall, c("age.deid", "agecat", "gender", "exposure1",
+                                    "vaxtype1", "vaxyn", "vaxcomp")) %>%
+  subset(!is.na(exposure1) & !grepl("NA", exposure1)) %>%
+  rename(exp = exposure1) %>%
+  mutate(exp = as.character(exp)) 
+
+datdemo2 <- dat1.comp %>%
+  dplyr::select(c("age.deid", "agecat", "gender", "exposure2", "vaxtype1", 
+                  "vaxyn", "vaxcomp")) %>%
+  rename(exp = exposure2) %>%
+  mutate(exp = as.character(exp))
+
+datdemo1$group <- "Entire cohort"
+datdemo2$group <- "Study sample"
+
+datdemo <- rbind(datdemo1, datdemo2) %>%
+  mutate(exp = factor(exp, levels = c("Seronegative", "Vaccinated",
+                                      "Seroconversion at Survey 1",
+                                      "Seroconversion at Survey 2",
+                                      "Seroconversion & vaccination",
+                                      "Inferred reinfection"))) %>%
+  mutate(vaxtype1 = as.character(vaxtype1)) %>%
+  mutate(vaxtype2 = case_when(vaxtype1 == "AZ" ~ "AstraZeneca/Fiocruz",
+                              vaxtype1 == "JnJ" ~ "Janssen",
+                              vaxtype1 == "Pfizer" ~ "Pfizer/Wyeth",
+                              vaxtype1 == "Corona" ~ "SInovac/Butantan")) %>%
+  mutate(vaxtype2 = factor(vaxtype2, levels = c("AstraZeneca/Fiocruz",
+                                                "Janssen", "Pfizer/Wyeth",
+                                                "Sinovac/Butantan")))
+
+# Subsets with vaccination history
+datdemo$sub <- "all"
+
+datdemo3 <- subset(datdemo, vaxyn == "Yes" & grepl("accin", exp)) 
+datdemo3$sub <- "vaxed"
+
+datdemo4 <- subset(datdemo, vaxcomp == T & grepl("accin", exp)) 
+datdemo4$sub <- "fullvaxed"
+
+datdemo <- rbind(datdemo, datdemo3, datdemo4) 
+
+label(datdemo$age.deid) <- 'Age'
+label(datdemo$agecat) <- 'Age category'
+label(datdemo$gender) <- 'Gender'
+label(datdemo$exp) <- 'Exposure history'
+label(datdemo$vaxtype1) <- 'Vaccine type'
+
+units(datdemo$age.deid) <- "years"
+
+tab1 <- table1(~ gender + age.deid + agecat + exp | group, 
+               render.continuous = render.cont.iqr,
+               data = subset(datdemo, sub == "all"), overall = F)
+tab2 <- table1(~ vaxtype1 | group,
+               render.continuous = render.cont.iqr,
+               data = datdemo3, overall = F)
+tab3 <- table1(~ vaxtype1 | group,
+               render.continuous = render.cont.iqr,
+               data = datdemo4, overall = F)
+
+tabfinal <- rbind(as_tibble(tab1)[-c(2, 5, 8, 16), ], 
+            as_tibble(tab2)[-2, ],
+            as_tibble(tab3)[-2, ]) 
+
+
+kable(tabfinal[1:18, ], format = "html") %>%
+  kable_styling(font_size = 10) %>%
+  pack_rows("Gender", 2, 3) %>%
+  pack_rows("Age (years)", 4, 5) %>%
+  pack_rows("Age group", 6, 12) %>%
+  pack_rows("Exposure history", 13, 18) 
+  
+  
+kable(tabfinal[19:28, ], format = "html") %>%
+  kable_styling(font_size = 10) %>%
+  pack_rows(">= 1 dose received\nbefore sample collection", 1, 5) %>%
+  pack_rows("Primary series completed\nbefore sample collection", 6, 10 )%>%
+  add_header_above(c("Vaccine formulations" = 3), bold = T, align = "center") 
+
+
+```
+
+
+```{r figs1prep, eval = F, include = F, fig.height = 9, fig.width = 16}
+
+# Run mixture model on training data
+# This step is optional; MCMC output is provided
+source("MucosalImmunity_MixtureModel.R")
+
+```
+
+```{r figs1, eval = T, include = T, fig.height = 9, fig.width = 12}
+
+if (!file.exists('mcmc_logratio_nr.normal_r.lognormal_noprior_chain.csv')) {
+  source("MucosalImmunity_MixtureModel.R")
+}
+
+# Predicted probablities
+expit <- function(x){1/(1+exp(-x))}
+logit <- function(x){log(x/(1-x))}
+
+baseFile="mcmc_logratio_nr.normal_r.lognormal_noprior"
+  
+d <- datpcr %>%
+    rename(nodratio = Serum.S.IgG.nod.PCR) %>%
+    mutate(logratio = log(nodratio)) %>%
+    mutate(gs = case_when(group == "Positive" ~ 1,
+                          group == "Negative" ~ 0))
+
+pars = read.csv(paste0(baseFile,'_chain.csv'),header=F)
+colnames(pars) = c('b0','mean_nonresp','sigma','beta0','gamma0')
+y_name = "logratio"
+  
+# Posterior parameters
+parfit = apply(pars,2,median)
+p025 = apply(pars, 2, quantile, prob=0.025)
+p975 = apply(pars, 2, quantile, prob=0.975)
+  
+gammas = parfit[grepl('gamma',names(parfit))]
+gammas[1] = parfit[['mean_nonresp']]+exp(gammas[1])
+betas = parfit[grepl('beta',names(parfit))]
+mu <- gammas
+muvec <- NULL
+muvec <- as.matrix(cbind(rep(1, nrow(d)), muvec))
+muvec <- muvec %*% gammas
+betavec <- NULL
+betavec <- as.matrix(cbind(rep(1, nrow(d)), betavec))
+betavec <- betavec %*% betas
+ 
+# Predicted values
+isr_data = d[,y_name]
+isr = seq(min(d[,y_name]),max(d[,y_name]),0.001)   
+  
+logmean = log(muvec)
+logsd = exp(-parfit[["sigma"]]/2)
+y.seropos_data = expit(betavec)*dlnorm(isr_data,meanlog=logmean,sdlog=logsd)
+y.seropos = expit(parfit[["beta0"]])*
+dlnorm(isr,meanlog=log(mu),sdlog=logsd)
+
+y.seroneg = (1-expit(parfit[["beta0"]])) * 
+  dnorm(isr,mean=parfit[["mean_nonresp"]], sd=exp(parfit[["b0"]]))
+y.seroneg_data = (1-expit(betavec)) * 
+  dnorm(isr_data,mean=parfit[["mean_nonresp"]], sd=exp(parfit[["b0"]]))
+  
+d$p_seropositive = y.seropos_data/(y.seropos_data+y.seroneg_data)
+
+# Sensitivity, specificity  
+perffxn <- function(x){ 
+    pos = length(which(d[,y_name] >= x & d$gs == 1))
+    neg = length(which(d[,y_name] < x & d$gs == 0))
+    sens = pos / sum(d$gs == 1 & !is.na(d[,y_name]))
+    spec = neg / sum(d$gs == 0 & !is.na(d[,y_name]))
+    return(c(pos, neg, sens, spec))
+  }
+
+threshseq <- seq(-2, 2, 0.05)
+
+perf <- data.frame(thresh = threshseq, 
+                    pos = NA, neg = NA, sens = NA, spec = NA) 
+perf[, 2:5] <- t(sapply(perf$thresh, perffxn)) 
+perf <- arrange(perf, sens)
+  
+# OD change distribution among validation set
+plotbreak = c(0.25, 0.5, 1, 2, 4, 8, 16)
+plotlab = as.character(c(0.25, 0.5, 1, 2, 4, 8, 16))
+
+pmm1 <- ggplot(d) +
+  geom_histogram(aes(x = nodratio, fill = group), col = "white",
+                 boundary = 0, closed = "left") +
+  scale_x_continuous("Anti-S IgG OD fold-change",
+                     trans = "log2", 
+                     breaks = plotbreak,
+                     labels = plotlab,
+                     lim = c(0.1, 16)) +
+  ylab("Count") +
+  theme_classic() +
+  scale_fill_manual("True status", breaks = c("Negative", "Positive"),
+                     labels = c("No reinfection", "Reinfection"),
+                     values = c("gray30", "red")) +
+  theme(legend.position = c(0.1, 0.9))
+
+
+
+
+# OD change vs. predicted probability of reinfection
+# Find cutoff values closest to 1.5
+cutchar <- perf %>%
+  mutate(dif = abs(log(1.5) - thresh)) %>%
+  subset(dif == min(dif))
+
+breakvec <- log(c(1/4, 1/2, 1, 2, 4, 8, 16))
+
+# Summary of sensitivity and specificity
+senspec <- paste0("Sensitivity ", 
+       sprintf("%.1f", cutchar$sens*100), "%\n(95% CI ",
+       sprintf("%.1f", 
+               prop.test(cutchar$pos, max(perf$pos))$conf.int[1]*100),
+       "-", 
+       sprintf("%.1f", 
+               prop.test(cutchar$pos, max(perf$pos))$conf.int[2]*100), 
+       "%)",
+       "\nSpecificity ", 
+       sprintf("%.1f", cutchar$spec*100), "%\n(95% CI ",
+       sprintf("%.1f", 
+               prop.test(cutchar$neg, max(perf$neg))$conf.int[1]*100), 
+       "-",
+       sprintf("%.1f", 
+               prop.test(cutchar$neg, max(perf$neg))$conf.int[2]*100), 
+       "%)")
+
+pmm2 <- ggplot(d) +
+  geom_point(aes(x = d[, y_name], y = p_seropositive, col = group), 
+             alpha = 0.5) +
+  scale_y_continuous("Model-predicted probability") +
+  scale_x_continuous("Anti-S IgG OD fold-change",
+                     breaks = breakvec,
+                     labels = exp(breakvec),
+                     lim = log(c(0.1, 16))) +
+  theme_classic() +
+  scale_color_manual("True status", breaks = c("Negative", "Positive"),
+                     labels = c("No reinfection", "Reinfection"),
+                     values = c("gray30", "red")) +
+  annotate("text", x = log(0.1), y = 0.25, hjust = 0, size = 3.5,
+           label = senspec) +
+  theme(legend.position = c(0.2, 0.9), 
+        legend.spacing.y = unit(0.25, "pt"),
+        legend.key.height = unit(1, "line")) + 
+  geom_vline(aes(xintercept = log(1.5)), linetype = "dashed")
+
+# ROC curve
+auc_od <- auc(d$gs, d[, y_name])
+aucci_od <- ci.auc(d$gs, d[, y_name])
+
+pmm3 <- ggplot(perf) +
+  geom_line(aes(x = 1 - spec, y = sens)) +
+  xlab("1 - Specificity") +
+  ylab("Sensitivity") +
+  ggtitle("OD") +
+  geom_abline(slope = 1, intercept = c(0, 0), color = "darkgray", 
+              linetype = "dashed") +
+  theme_classic() +
+  scale_y_continuous("Sensitivity", expand = c(0, 0), 
+                     breaks = seq(0, 1, 0.2), lim = c(0, 1)) +
+  scale_x_continuous("1 - Specificity", expand = c (0, 0), 
+                     breaks = seq(0, 1, 0.2), lim = c(0, 1)) +
+  ggtitle("") +
+  annotate("text", x = 0.5, y = 0.1, 
+           label = paste0("AUC ", sprintf("%.3f", as.numeric(auc_od)), 
+                          " (95% CI ",
+                          sprintf("%.3f", as.numeric(aucci_od[1])),
+                          "-",
+                          sprintf("%.3f", as.numeric(aucci_od[3])),
+                          ")"))
+
+# Distribution of OD change in study sample
+pmm4 <- ggplot(subset(dat1.comp, exposure2 %in% c("Inferred reinfection",
+                                             "Seroconversion at Survey 1"))) +
+  geom_histogram(aes(x = log(Serum.S.IgG.nod.fold)), col = "white") +
+  scale_x_continuous("Anti-S IgG OD fold-change",
+                     breaks = breakvec,
+                     labels = exp(breakvec),
+                     lim = log(c(0.1, 16))) +
+  scale_y_continuous("Count") +
+  theme_classic() +
+  geom_vline(aes(xintercept = log(1.5)), linetype = "dashed")
+
+# Arrange panel
+ggarrange(pmm1, pmm2, pmm3, pmm4,
+          nrow = 2, ncol = 2, align = "hv",
+          font.label = labform,
+          labels = mylabels[1:4]) &
+  theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0, unit = "pt"))
+
+```
+
+<br>
+<br>
+
+**Extended Data Figure S1: Ascertainment of reinfections from serial serology results**
+**a**, Among `r nrow(datpcr)` individuals who were infected and seroconverted 
+prior to Survey 2, we identified `r nrow(subset(datpcr, group == "Positive"))` 
+individuals who had a PCR-confirmed reinfection during a subsequent period of 
+active surveillance and `r nrow(subset(datpcr, group == "Negative"))` controls 
+with a negative SARS-CoV-2 PCR, and we computed the fold-change in anti-S IgG 
+optical density. 
+**b**, A fold-change in anti-S IgG optical density ≥1.5 was 
+`r cutchar$spec*100`% (95% CI 
+`r sprintf("%.1f", prop.test(cutchar$neg, max(perf$neg))$conf.int[1]*100)`-
+`r sprintf("%.1f", prop.test(cutchar$neg, max(perf$neg))$conf.int[2]*100)`0%)
+specific for reinfection. 
+**c**, The area under the ROC curve for prediction of reinfection based was 
+`r sprintf("%.3f", as.numeric(auc_od))` (95% CI 
+`r sprintf("%.3f", as.numeric(aucci_od[1]))`-
+`r sprintf("%.3f", as.numeric(aucci_od[2]))`). 
+**d**, Based on the distribution of fold-change in anti-S IgG among the 
+`r nrow(subset(dat1.comp, exposure2 %in% c("Inferred reinfection", "Seroconversion at Survey 1")))` 
+individuals in our study sample who were seropositive at Survey 1 and remained 
+unvaccinated, 
+`r nrow(subset(dat1.comp, exposure2 == "Inferred reinfection"))` 
+experienced a reinfection (“Inferred reinfection” group) and 
+`r nrow(subset(dat1.comp, exposure2 == "Seroconversion at Survey 1"))` 
+did not (“Seroconversion at Survey 1” group).  
+
+
+```{r figs2, eval = T, include = T, fig.height = 9, fig.width = 6, out.width = '50%'}
+ 
+ggarrange(elisa_list[[5]], elisa_list[[6]], 
+          elisa_list[[11]], elisa_list[[12]], 
+          elisa_list[[17]], elisa_list[[18]], 
+          nrow = 3, ncol = 2, common.legend = T, legend = "right",
+          font.label = labform,
+          labels = mylabels[1:6]) 
+ 
+```
+
+<br>
+<br>
+
+**Extended Data Figure S2: Additional ELISA results**
+The levels of serum (**a**-**b**), nasal (**c**-**d**), and saliva (**e**-**f**)
+IgG and IgA antibody against the RBD domain of SARS-CoV-2 were compared across 
+the following exposure groups: Seronegative and unvaccinated, Vaccinated, 
+Seroconversion at Survey 1, Seroconversion at Survey 2, Seroconversion and 
+vaccination, and Inferred reinfection. Pre-infection serum and saliva samples 
+from healthcare workers and pre-pandemic nasal swabs from residents and 
+employees of a long-term care facility (labeled as Unexposed) were used as the 
+reference negative controls and for derivation of cutoffs for positive salivary
+and nasal antibody responses. Cutoffs for positive responses for serum anti-S 
+and anti-N IgG were derived from pre-pandemic banked serum samples from our 
+cohort. Analysis was performed using one-way ANOVA with correction for multiple 
+comparisons using the Tukey method.
+ 
+ 
+```{r figs3, eval = T, include = T, fig.height = 9, fig.width = 16}
+ 
+datmuc.clust <- heatplot.clust %>%
+  rownames_to_column("randid") %>%
+  merge(select(dat1.comp, c("randid", matches("Serum.RBD.Ig..ngml.S2"))),
+        by = "randid", all = T) %>%  
+  dplyr::rename_all(~stringr::str_replace_all(., ".ngml.S2", "")) %>%
+  mutate(cluster2 = case_when(cluster == clust.order$cluster[1] ~ "Saliva-only",
+                              cluster == clust.order$cluster[2] ~ "Antibody-low",
+                              cluster == clust.order$cluster[3] ~ "Saliva-high",
+                              cluster == clust.order$cluster[4] ~ "Serum-high",
+                              cluster == clust.order$cluster[5] ~ "Nasal-high",
+                              cluster == clust.order$cluster[6] ~ "Saliva-low")) %>%
+  mutate(cluster2 = factor(cluster2, levels = c("Saliva-only", "Antibody-low",
+                                                "Saliva-high", "Serum-high",
+                                                "Nasal-high", "Saliva-low"))) %>%
+  pivot_longer(cols = contains("Ig"), names_to = c("type", "Ig"),
+               values_to = "value",
+               names_pattern = "(Serum|Saliva|Nasal)\\.(.+)") %>%
+  # Add cutoffs
+  merge(select(cuttab, c("type", "var", "cut")), 
+      by.x = c("type", "Ig"), by.y = c("type", "var"), all.x = T, all.y = F)
+
+# Plot
+# typvec <- rep(c("Serum", "Nasal", "Saliva"), each = 6)
+# igvec <- rep(c("Stotal.IgG", "N.IgG", "Stotal.IgA","N.IgA", "RBD.IgG", "RBD.IgA"), 3)
+# igvec2 <- rep(c("S IgG",  "N IgG", "S IgA","N IgA", "RBD IgG", "RBD IgA"), 3)
+# # Axis limits
+# limlo <- rep(c(1.5, -5.5, -5.5), each = 6)
+# limhi <- rep(c(6, -1, -1), each = 6)
+# # Amount to nudge significance bars vertically
+nudgevec <- rep(c(2, 1, 1.7), each = 6)
+
+clust_list <- list()
+for(i in 1:18){
+  dtmp <- subset(datmuc.clust, type == typvec[i] & grepl(igvec[i], Ig)) %>% 
+    subset(!is.na(value))
+  
+  tmpmult <- abs(limhi[i] - limlo[i]) %/% 3
+  
+  pstat <- subset(datmuc.clust, type == typvec[i] & grepl(igvec[i], Ig)) %>%
+    mutate(value = log(value)) %>%
+    rstatix::tukey_hsd(value ~ cluster2) %>%
+    add_significance("p.adj") %>%
+    add_x_position(x = "cluster2") %>%
+    mutate(width = xmax - xmin) %>%
+    arrange(desc(width)) %>%
+    mutate(dec = cumsum(p.adj < 0.05)) %>%
+    mutate(dec = replace(dec, p.adj >= 0.05, 0)) %>%
+    mutate(y.position = limhi[i] - 0.2*dec*tmpmult)
+
+  p <- ggplot(dtmp) +
+    geom_beeswarm(aes(x = cluster2, y = log(value, 10), col = cluster2), 
+                  corral = "random") +
+    geom_hline(aes(yintercept = log(cut, 10)), lty = "dashed", col = "darkgray") +
+    stat_summary(aes(x = cluster2, y = log(value, 10), col = cluster2), 
+                 fun = "median",
+                 geom = "crossbar", width = 0.8, lwd = 0.3, show.legend = F) +
+    stat_pvalue_manual(data = pstat, bracket.nudge.y = nudgevec[i],
+                         label = "p.adj.signif", hide.ns = T,
+                         tip.length = 0, size = 4) +
+    scale_y_continuous(paste0("Log ", typvec[i], " ", igvec2[i]), 
+                   breaks = seq(ceiling(limlo[i]), limhi[i],
+                                tmpmult)) +
+    scale_x_discrete("", labels = NULL) +
+    scale_color_manual("Cluster", breaks = levels(dtmp$cluster2),
+                       labels = levels(dtmp$cluster2),
+                       values = c("#6ead4e", "#f6c26b", "#641f43", 
+                       "#b22d86", "#de5cd3", "#b20000")) +
+    coord_cartesian(clip = "off", ylim = c(limlo[i], limhi[i])) + 
+    theme_classic() +
+    theme(axis.text = element_text(face = "bold", size = 8), 
+          axis.title = element_text(size = 10), axis.ticks.x = element_blank(),
+          plot.margin = unit(c(6, 0, 0, 0), "lines"),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 14))
+  
+  clust_list[[i]] <- p  
+}
+
+ggarrange(clust_list[[1]], clust_list[[2]], clust_list[[3]], 
+          clust_list[[4]], clust_list[[5]], clust_list[[6]], 
+          clust_list[[7]], clust_list[[8]], clust_list[[9]], 
+          clust_list[[10]], clust_list[[11]], clust_list[[12]], 
+          clust_list[[13]], clust_list[[14]], clust_list[[15]], 
+          clust_list[[16]], clust_list[[17]], clust_list[[18]], 
+          nrow = 3, ncol = 6, common.legend = T, legend = "right",
+          font.label = labform,
+          labels = mylabels[1:18]) 
+ 
+``` 
+ 
+<br>
+<br>
+ 
+**Extended Data Figure S3: Antibody responses across expression clusters**
+The levels of serum (**a**-**f**), nasal (**g**-**l**), and saliva (**m**-**r**)
+IgG and IgA antibody against the Spike (S Total), Nucleocapsid (N), and RBD
+domains of SARS-CoV-2 were compared across the following patterns of antibody
+expression as identified by unsupervised hierarchical clustering:
+groups: highest expression in the nasal compartment (Nasal-high),
+highest expression in serum (Serum-high), highest expression in saliva 
+(Saliva-high), expressino in saliva with low expression in other compartments
+(Saliva-only), and low expression across all compartments (Antibody-low).
+Pre-infection serum and saliva samples from healthcare workers and pre-pandemic 
+nasal swabs from residents and employees of a long-term care facility 
+were used as the reference negative controls and for derivation of cutoffs 
+for positive salivary and nasal antibody responses. Cutoffs for positive 
+responses for serum antibodies were derived from pre-pandemic banked serum 
+samples from our cohort. Analysis was performed using one-way ANOVA with 
+correction for multiple comparisons using the Tukey method.
+
